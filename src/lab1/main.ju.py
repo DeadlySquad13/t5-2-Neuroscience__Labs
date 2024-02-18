@@ -222,7 +222,7 @@ plt.ylim(X_left, X_right)
 # %% [markdown]
 """
 ## Часть 3. Классификация изображений CIFAR100
-Загрузка и распаковка набора данных CIFAR100
+### Загрузка и распаковка набора данных CIFAR100
 """
 
 
@@ -241,4 +241,170 @@ file_path = data_path/filename
 
 urllib.request.urlretrieve(url, file_path)
 shutil.unpack_archive(file_path, extract_dir=data_path)
-file_path.unlink()
+file_path.unlink()  # Remove archive after extracting it.
+
+
+# %% [markdown]
+# ### Чтение тренировочной и тестовой выборки
+
+# %%
+def stem_extensions(filename: Path):
+    extensions = "".join(filename.suffixes)
+
+    return str(filename).removesuffix(extensions)
+
+
+# %%
+dataset_path = Path(stem_extensions(file_path))
+
+with open(dataset_path/'train', 'rb') as f:
+    data_train = pickle.load(f, encoding='latin1')
+with open(dataset_path/'test', 'rb') as f:
+    data_test = pickle.load(f, encoding='latin1')
+
+# Здесь указать ваши классы по варианту!!!
+CLASSES = [0, 55, 58]
+
+train_X = data_train['data'].reshape(-1, 3, 32, 32)
+train_X = np.transpose(train_X, [0, 2, 3, 1])  # NCHW -> NHWC
+train_y = np.array(data_train['fine_labels'])
+mask = np.isin(train_y, CLASSES)
+train_X = train_X[mask].copy()
+train_y = train_y[mask].copy()
+train_y = np.unique(train_y, return_inverse=1)[1]
+del data_train
+
+test_X = data_test['data'].reshape(-1, 3, 32, 32)
+test_X = np.transpose(test_X, [0, 2, 3, 1])
+test_y = np.array(data_test['fine_labels'])
+mask = np.isin(test_y, CLASSES)
+test_X = test_X[mask].copy()
+test_y = test_y[mask].copy()
+test_y = np.unique(test_y, return_inverse=1)[1]
+del data_test
+Image.fromarray(train_X[50]).resize((256, 256))
+
+# %% [markdown]
+# ### Создание Pytorch DataLoader'a
+
+# %%
+batch_size = 128
+dataloader = {}
+for (X, y), part in zip([(train_X, train_y), (test_X, test_y)],
+                        ['train', 'test']):
+    tensor_x = torch.Tensor(X)
+    tensor_y = F.one_hot(torch.Tensor(y).to(torch.int64),
+                                     num_classes=len(CLASSES))/1.
+    dataset = TensorDataset(tensor_x, tensor_y)  # создание объекта датасета
+    dataloader[part] = DataLoader(dataset, batch_size=batch_size, shuffle=True)  # создание экземпляра класса DataLoader
+dataloader
+
+# %% [markdown]
+# ### Создание Pytorch модели многослойного перцептрона с одним скрытым слоем
+
+
+# %%
+class Normalize(nn.Module):
+    def __init__(self, mean, std):
+        super(Normalize, self).__init__()
+        self.mean = torch.tensor(mean)
+        self.std = torch.tensor(std)
+
+    def forward(self, input):
+        x = input / 255.0
+        x = x - self.mean
+        x = x / self.std
+
+        return torch.flatten(x, start_dim=1)  # nhwc -> nm
+
+
+class Cifar100_MLP(nn.Module):
+    def __init__(self, hidden_size=32, classes=100):
+        super(Cifar100_MLP, self).__init__()
+        # https://blog.jovian.ai/image-classification-of-cifar100-dataset-using-pytorch-8b7145242df1
+        self.norm = Normalize(
+            [0.5074, 0.4867, 0.4411],
+            [0.2011, 0.1987, 0.2025]
+        )
+        self.seq = nn.Sequential(
+            nn.Linear(32*32*3, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, classes),
+        )
+
+    def forward(self, input):
+        x = self.norm(input)
+
+        return self.seq(x)
+
+
+HIDDEN_SIZE = 10
+model = Cifar100_MLP(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
+model
+
+# %% [markdown]
+# ### Выбор функции потерь и оптимизатора градиентного спуска
+
+# %%
+criterion = nn.CrossEntropyLoss()
+optimizer = optim.SGD(model.parameters(), lr=0.005)
+     
+# %% [markdown]
+# ### Обучение модели по эпохам
+
+# %%
+EPOCHS = 250
+steps_per_epoch = len(dataloader['train'])
+steps_per_epoch_val = len(dataloader['test'])
+for epoch in range(EPOCHS):  # проход по набору данных несколько раз
+    running_loss = 0.0
+    model.train()
+    for i, batch in enumerate(dataloader['train'], 0):
+        # получение одного минибатча; batch это двуэлементный список из [inputs, labels]
+        inputs, labels = batch
+
+        # очищение прошлых градиентов с прошлой итерации
+        optimizer.zero_grad()
+
+        # прямой + обратный проходы + оптимизация
+        outputs = model(inputs)
+        loss = criterion(outputs, labels)
+        # loss = F.cross_entropy(outputs, labels)
+        loss.backward()
+        optimizer.step()
+
+        # для подсчёта статистик
+        running_loss += loss.item()
+    print(f'[{epoch + 1}, {i + 1:5d}] loss: {running_loss / steps_per_epoch:.3f}')
+    running_loss = 0.0
+    model.eval()
+    with torch.no_grad():  # отключение автоматического дифференцирования
+        for i, data in enumerate(dataloader['test'], 0):
+            inputs, labels = data
+
+            outputs = model(inputs)
+            loss = criterion(outputs, labels)
+            running_loss += loss.item()
+    print(f'[{epoch + 1}, {i + 1:5d}] val loss: {running_loss / steps_per_epoch_val:.3f}')
+print('Обучение закончено')
+
+# %% [markdown]
+# ### Проверка качества модели по классам на обучающей и тестовой выборках
+
+# %%
+for part in ['train', 'test']:
+    y_pred = []
+    y_true = []
+    with torch.no_grad():  # отключение автоматического дифференцирования
+        for i, data in enumerate(dataloader[part], 0):
+            inputs, labels = data
+
+            outputs = model(inputs).detach().numpy()
+            y_pred.append(outputs)
+            y_true.append(labels.numpy())
+        y_true = np.concatenate(y_true)
+        y_pred = np.concatenate(y_pred)
+        print(part)
+        print(classification_report(y_true.argmax(axis=-1), y_pred.argmax(axis=-1),
+                                    digits=4, target_names=list(map(str, CLASSES))))
+        print('-'*50)
