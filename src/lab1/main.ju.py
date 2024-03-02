@@ -18,17 +18,17 @@
 3. ИУ5 (Номер варианта + 21) = 14 + 21 = 35
 """
 
+# %%
 import pickle
 
 import matplotlib.pyplot as plt
-# %%
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from numpy.typing import ArrayLike
 from PIL import Image
-from sklearn.datasets import make_circles, make_moons
 from sklearn.metrics import classification_report
 from torch.utils.data import DataLoader, TensorDataset
 
@@ -41,48 +41,71 @@ from torch.utils.data import DataLoader, TensorDataset
 """
 
 # %%
-X = (np.arange(100) / 100 - 0.5).repeat(5)
+from operator import itemgetter  # noqa
 
-y = 1 / (1 + np.exp(-10 * X))
+X = (np.arange(100) / 100 - 0.5).repeat(5)
+# Наша функция, которую мы пытаемся получить в ходе апроксимации.
+# y = 1 / (1 + np.exp(-10 * X))  # Исходная.
+y = np.sin(X * 10) / 2
 yn = np.random.normal(scale=0.05, size=y.size) + y
 
 plt.plot(X, yn)
 plt.plot(X, y, linestyle="--", c="k")
 ################################################
-tensor_X = torch.Tensor(X.reshape(-1, 1))
-tensor_y = torch.Tensor(yn.reshape(-1, 1))
 
 HIDDEN_SIZE = 64
+
+
+def np_to_tensor(arr: ArrayLike):
+    return torch.Tensor(arr.reshape(-1, 1))
+
+
+tensor_X = np_to_tensor(X)
+tensor_y = np_to_tensor(yn)
+
+
 # Инициализация весов MLP с одним скрытым слоём
-weights_1 = (torch.rand(1, HIDDEN_SIZE) - 0.5) / 10
-bias_1 = torch.zeros(HIDDEN_SIZE)
+def init_neural_network(hidden_size=HIDDEN_SIZE):
+    weights1 = (torch.rand(1, hidden_size) - 0.5) / 10
+    bias1 = torch.zeros(hidden_size)
 
-weights_2 = (torch.rand(HIDDEN_SIZE, 1) - 0.5) / 10
-bias_2 = torch.zeros(1)
+    weights2 = (torch.rand(hidden_size, 1) - 0.5) / 10
+    bias2 = torch.zeros(1)
 
+    return {"weights1": weights1, "bias1": bias1, "weights2": weights2, "bias2": bias2}
+
+
+weights1, bias1, weights2, bias2 = itemgetter("weights1", "bias1", "weights2", "bias2")(
+    init_neural_network()
+)
 
 # %% [markdown]
 # ### Обучение нейронной сети задачи регрессии
 
+
 # %%
-# Определяем функцию нелинейности
-relu = lambda x: torch.maximum(x, torch.Tensor([0]))
+# Определяем функцию нелинйности
+def relu(x: torch.Tensor):
+    return torch.maximum(x, torch.Tensor([0]))
+
+
 # Прямой проход
-forward = (
-    lambda x: (weights_2.t() * relu((weights_1 * x) + bias_1)).sum(
+def forward(x: torch.Tensor) -> torch.Tensor:
+    return (weights2.t() * relu((weights1 * x) + bias1)).sum(
         axis=-1, keepdims=True
-    )
-    + bias_2
-)
-loss = lambda y, y_: ((y - y_) ** 2).sum(axis=-1)
+    ) + bias2
+
+
+def loss(y: torch.Tensor, y_: torch.Tensor) -> torch.Tensor:
+    return ((y - y_) ** 2).sum(axis=-1)
 
 
 # обратный проход
-def backward(X, y, y_pred):
+def backward(X: torch.Tensor, y: torch.Tensor, y_pred: torch.Tensor):
     # производная функции потерь по y_pred
     dL = 2 * (y_pred - y)
-    # значения нейронов скрытого слоя до применения активации
-    Ax = (weights_1 * X) + bias_1
+    # значения нейронов скрытго слоя до применения активации
+    Ax = (weights1 * X) + bias1
     # значения нейронов скрытого слоя после применения активации
     A = relu(Ax)
     # производная функции потерь по weight_2
@@ -90,25 +113,27 @@ def backward(X, y, y_pred):
     # производная функции потерь по bias_2
     db2 = dL.sum(axis=0)
     # производная функции потерь по значениям скрытого слоя после активации
-    dA = torch.mm(dL, weights_2.t())
+    dA = torch.mm(dL, weights2.t())
     # производная функции потерь по значениям скрытого слоя до активации
     dA[Ax <= 0] = 0
     # производная функции потерь по weight_1
-    dW = torch.mm(X.t(), dA)
+    dW1 = torch.mm(X.t(), dA)
     # производная функции потерь по bias_1
-    db = dA.sum(axis=0)
+    db1 = dA.sum(axis=0)
     # print(dW.shape, db.shape, dW2.shape, db2.shape)
-    return dW, db, dW2, db2
+
+    return {"dW1": dW1, "db1": db1, "dW2": dW2, "db2": db2}
 
 
 def optimize(params, grads, lr=0.001):
     # градиентный спуск по всей обучающей выборке
     W1, b1, W2, b2 = params
-    W1 -= lr * grads[0]
-    W2 -= lr * grads[2]
-    b1 -= lr * grads[1]
-    b2 -= lr * grads[3]
-    return W1, b1, W2, b2
+    W1 -= lr * grads["dW1"]
+    W2 -= lr * grads["dW2"]
+    b1 -= lr * grads["db1"]
+    b2 -= lr * grads["db2"]
+
+    return {"W1": W1, "b1": b1, "W2": W2, "b2": b2}
 
 
 # 50 тысяч итераций градиентного спуска == 50 тысяч эпох
@@ -116,8 +141,12 @@ for i in range(50000):
     output = forward(tensor_X)
     cur_loss = loss(output, tensor_y)
     grads = backward(tensor_X, tensor_y, output)
-    params = [weights_1, bias_1, weights_2, bias_2]
-    weights_1, bias_1, weights_2, bias_2 = optimize(params, grads, 1e-4)
+    params = [weights1, bias1, weights2, bias2]
+    optimized_params = optimize(params, grads, 1e-4)
+    weights1, bias1, weights2, bias2 = itemgetter("W1", "b1", "W2", "b2")(
+        optimized_params
+    )
+
     if (i + 1) % 10000 == 0:
         plt.plot(X, output.numpy(), label=str(i + 1), alpha=0.5)
 
@@ -133,12 +162,20 @@ print(cur_loss.numpy().mean())
 """
 
 # %%
-X = np.random.randint(2, size=(1000, 2))
+from sklearn.datasets import make_circles, make_moons  # noqa
 
-y = (X[:, 0] + X[:, 1]) % 2  # XOR
-X = X + np.random.normal(0, scale=0.1, size=X.shape)
+# Данные, которые стараемся классифицировать:
+# Исходная функция:
+# X = np.random.randint(2, size=(1000, 2))
+# y = (X[:, 0] + X[:, 1]) % 2  # XOR
+# X = X + np.random.normal(0, scale=0.1, size=X.shape)
+
+# Кольца, вложенные друг в друга.
 # X, y = make_circles(n_samples=1000, noise=0.025)
-# X, y = make_moons(n_samples=1000, noise=0.025)
+
+# Вложенные друг в друга месяцы.
+X, y = make_moons(n_samples=1000, noise=0.025)
+
 plt.scatter(X[:, 0], X[:, 1], c=y)
 ####################################################
 tensor_X = torch.Tensor(X.reshape(-1, 2))
@@ -146,11 +183,11 @@ tensor_y = torch.Tensor(y.reshape(-1, 1))
 
 HIDDEN_SIZE = 16
 # Инициализация весов MLP с одним скрытым слоём
-weights_1 = ((torch.rand(2, HIDDEN_SIZE) - 0.5) / 10).detach().requires_grad_(True)
-bias_1 = torch.zeros(HIDDEN_SIZE, requires_grad=True)
+weights1 = ((torch.rand(2, HIDDEN_SIZE) - 0.5) / 10).detach().requires_grad_(True)
+bias1 = torch.zeros(HIDDEN_SIZE, requires_grad=True)
 
-weights_2 = ((torch.rand(HIDDEN_SIZE, 1) - 0.5) / 10).detach().requires_grad_(True)
-bias_2 = torch.zeros(1, requires_grad=True)
+weights2 = ((torch.rand(HIDDEN_SIZE, 1) - 0.5) / 10).detach().requires_grad_(True)
+bias2 = torch.zeros(1, requires_grad=True)
 
 # %% [markdown]
 # ### Обучение нейронной сети задачи классификации
@@ -164,9 +201,9 @@ def sigmoid(x):
 
 # Прямой проход
 def forward(x):
-    hidden = torch.mm(x, weights_1) + bias_1
+    hidden = torch.mm(x, weights1) + bias1
     hidden_nonlin = sigmoid(hidden)
-    output = (weights_2.t() * hidden_nonlin).sum(axis=-1, keepdims=True) + bias_2
+    output = (weights2.t() * hidden_nonlin).sum(axis=-1, keepdims=True) + bias2
 
     return sigmoid(output)
 
@@ -182,7 +219,7 @@ def loss(y_true, y_pred):
 lr = 1e-3
 # задаём число итераций
 iters = 10000
-params = [weights_1, bias_1, weights_2, bias_2]
+params = [weights1, bias1, weights2, bias2]
 losses = []
 for i in range(iters):
     output = forward(tensor_X)
