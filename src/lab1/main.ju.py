@@ -167,22 +167,22 @@ from sklearn.datasets import make_circles, make_moons  # noqa
 
 # Данные, которые стараемся классифицировать:
 # Исходная функция:
-X = np.random.randint(2, size=(1000, 2))
-y = (X[:, 0] + X[:, 1]) % 2  # XOR
-X = X + np.random.normal(0, scale=0.1, size=X.shape)
+# X = np.random.randint(2, size=(1000, 2))
+# y = (X[:, 0] + X[:, 1]) % 2  # XOR
+# X = X + np.random.normal(0, scale=0.1, size=X.shape)
 
 # Кольца, вложенные друг в друга.
 # X, y = make_circles(n_samples=1000, noise=0.025)
 
 # Вложенные друг в друга месяцы.
-# X, y = make_moons(n_samples=1000, noise=0.025)
+X, y = make_moons(n_samples=1000, noise=0.025)
 
 plt.scatter(X[:, 0], X[:, 1], c=y)
 ####################################################
 tensor_X = np_to_tensor(X, size=2)
 tensor_y = np_to_tensor(y)
 
-HIDDEN_SIZE = 16
+HIDDEN_SIZE = 48
 
 
 # Инициализация весов MLP с одним скрытым слоём
@@ -226,23 +226,26 @@ def loss(y_true: torch.Tensor, y_pred: torch.Tensor):
     )
 
 
-# задаём шаг обучения
-lr = 1e-3
-# задаём число итераций
-iters = 10000
-params = [weights1, bias1, weights2, bias2]
-losses = []
-for i in range(iters):
-    output = forward(tensor_X)
-    lossval = loss(tensor_y, output)
-    lossval.backward()  # тут включается в работу autograd
-    for w in params:
-        with torch.no_grad():
-            w -= w.grad * lr  # обновляем веса
-        w.grad.zero_()  # зануляем градиенты, чтобы не накапливались за итерации
-    losses.append(lossval.item())
+# lr - шаг обучения
+def model(learning_rate=1e-3, iterations=10_000):
+    params = [weights1, bias1, weights2, bias2]
+    losses = []
+    for _ in range(iterations):
+        output = forward(tensor_X)
+        lossval = loss(tensor_y, output)
+        lossval.backward()  # тут включается в работу autograd
+        for w in params:
+            with torch.no_grad():
+                w -= w.grad * learning_rate  # обновляем веса
+            w.grad.zero_()  # зануляем градиенты, чтобы не накапливались за итерации
+        losses.append(lossval.item())
+
+    return {'losses': losses, 'output': output}
+
+
+learning_results = model()
 # выводим историю функции потерь по итерациям
-plt.plot(losses)
+plt.plot(learning_results['losses'])
 
 
 # %% [markdown]
@@ -278,7 +281,7 @@ def plot_classification_results(data: torch.Tensor):
     # рисуем разделяющие поверхности классов
     plt.contourf(xx, yy, Z, alpha=0.5)
     # рисуем обучающую выборку
-    plt.scatter(x_coordinates, y_coordinates, c=output.detach().numpy() > 0.5)
+    plt.scatter(x_coordinates, y_coordinates, c=learning_results['output'].detach().numpy() > 0.5)
     # задаём границы отображения графика
     plt.xlim(left_boundary, right_boundary)
     plt.ylim(bottom_boundary, top_boundary)
@@ -286,6 +289,12 @@ def plot_classification_results(data: torch.Tensor):
 
 plot_classification_results(X)
 
+# %% [markdown]
+"""
+Наша нейронная сеть с 16 нейронами в скрытом слое справилась с XOR
+и кольцами. С лунами - нет. Увеличение количества нейронов до 32 не дало улучшения результата,
+до 48 - дало.
+"""
 
 # %% [markdown]
 """
@@ -330,8 +339,8 @@ with open(dataset_path / "train", "rb") as f:
 with open(dataset_path / "test", "rb") as f:
     data_test = pickle.load(f, encoding="latin1")
 
-# Здесь указать ваши классы по варианту!!!
-CLASSES = [0, 55, 58]
+# Классы по варианту.
+CLASSES = [17, 70, 35]
 
 train_X = data_train["data"].reshape(-1, 3, 32, 32)
 train_X = np.transpose(train_X, [0, 2, 3, 1])  # NCHW -> NHWC
@@ -350,7 +359,11 @@ test_X = test_X[mask].copy()
 test_y = test_y[mask].copy()
 test_y = np.unique(test_y, return_inverse=1)[1]
 del data_test
-Image.fromarray(train_X[50]).resize((256, 256))
+
+# По экземпляру класса из выборки.
+for class_index, _ in enumerate(CLASSES):  # Берём именно индексы, так как классы, которые мы выбрали, в итоге нормировались в 0, 1, 2.
+    image_index_for_class = train_y.tolist().index(class_index)
+    display(Image.fromarray(train_X[image_index_for_class]).resize((256, 256)))
 
 # %% [markdown]
 # ### Создание Pytorch DataLoader'a
