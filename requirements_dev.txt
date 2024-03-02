@@ -5,3 +5,4 @@ pytest-cov==2.12.1
 mypy===0.910
 black===24.2.0
 isort===5.13.2
+pigar===2.1.3
