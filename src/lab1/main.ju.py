@@ -56,8 +56,9 @@ plt.plot(X, y, linestyle="--", c="k")
 HIDDEN_SIZE = 64
 
 
-def np_to_tensor(arr: ArrayLike):
-    return torch.Tensor(arr.reshape(-1, 1))
+# size = 1 for regression, size = number of classes for classification.
+def np_to_tensor(arr: ArrayLike, size=1):
+    return torch.Tensor(arr.reshape(-1, size))
 
 
 tensor_X = np_to_tensor(X)
@@ -166,28 +167,38 @@ from sklearn.datasets import make_circles, make_moons  # noqa
 
 # Данные, которые стараемся классифицировать:
 # Исходная функция:
-# X = np.random.randint(2, size=(1000, 2))
-# y = (X[:, 0] + X[:, 1]) % 2  # XOR
-# X = X + np.random.normal(0, scale=0.1, size=X.shape)
+X = np.random.randint(2, size=(1000, 2))
+y = (X[:, 0] + X[:, 1]) % 2  # XOR
+X = X + np.random.normal(0, scale=0.1, size=X.shape)
 
 # Кольца, вложенные друг в друга.
 # X, y = make_circles(n_samples=1000, noise=0.025)
 
 # Вложенные друг в друга месяцы.
-X, y = make_moons(n_samples=1000, noise=0.025)
+# X, y = make_moons(n_samples=1000, noise=0.025)
 
 plt.scatter(X[:, 0], X[:, 1], c=y)
 ####################################################
-tensor_X = torch.Tensor(X.reshape(-1, 2))
-tensor_y = torch.Tensor(y.reshape(-1, 1))
+tensor_X = np_to_tensor(X, size=2)
+tensor_y = np_to_tensor(y)
 
 HIDDEN_SIZE = 16
-# Инициализация весов MLP с одним скрытым слоём
-weights1 = ((torch.rand(2, HIDDEN_SIZE) - 0.5) / 10).detach().requires_grad_(True)
-bias1 = torch.zeros(HIDDEN_SIZE, requires_grad=True)
 
-weights2 = ((torch.rand(HIDDEN_SIZE, 1) - 0.5) / 10).detach().requires_grad_(True)
-bias2 = torch.zeros(1, requires_grad=True)
+
+# Инициализация весов MLP с одним скрытым слоём
+def init_neural_network(hidden_size=HIDDEN_SIZE):
+    weights1 = ((torch.rand(2, hidden_size) - 0.5) / 10).detach().requires_grad_(True)
+    bias1 = torch.zeros(hidden_size, requires_grad=True)
+
+    weights2 = ((torch.rand(hidden_size, 1) - 0.5) / 10).detach().requires_grad_(True)
+    bias2 = torch.zeros(1, requires_grad=True)
+
+    return {"weights1": weights1, "bias1": bias1, "weights2": weights2, "bias2": bias2}
+
+
+weights1, bias1, weights2, bias2 = itemgetter("weights1", "bias1", "weights2", "bias2")(
+    init_neural_network()
+)
 
 # %% [markdown]
 # ### Обучение нейронной сети задачи классификации
@@ -195,12 +206,12 @@ bias2 = torch.zeros(1, requires_grad=True)
 
 # %%
 # Определяем функцию нелинейности
-def sigmoid(x):
+def sigmoid(x: torch.Tensor):
     return 1 / (1 + torch.exp(-x))
 
 
 # Прямой проход
-def forward(x):
+def forward(x: torch.Tensor):
     hidden = torch.mm(x, weights1) + bias1
     hidden_nonlin = sigmoid(hidden)
     output = (weights2.t() * hidden_nonlin).sum(axis=-1, keepdims=True) + bias2
@@ -209,7 +220,7 @@ def forward(x):
 
 
 # Logloss
-def loss(y_true, y_pred):
+def loss(y_true: torch.Tensor, y_pred: torch.Tensor):
     return (
         -1 * (y_true * torch.log(y_pred) + (1 - y_true) * torch.log(1 - y_pred)).sum()
     )
@@ -238,31 +249,43 @@ plt.plot(losses)
 # ### Проверка результатов обучения
 
 # %%
-X_diff = X.max() - X.min()
-X_left = X.min() - 0.1 * X_diff
-X_right = X.max() + 0.1 * X_diff
-grid = np.arange(X_left, X_right, 0.01)
-grid_width = grid.size
-surface = []
-# создаем точки по сетке
-for x1 in grid:
-    for x2 in grid:
-        surface.append((x1, x2))
-surface = np.array(surface)
-# получаем предсказания для всех точек
-with torch.no_grad():
-    Z = forward(torch.Tensor(surface)).detach().numpy()
-# меняем форму в виде двухмерного массива
-Z = Z.reshape(grid_width, grid_width)
-xx = surface[:, 0].reshape(grid_width, grid_width)
-yy = surface[:, 1].reshape(grid_width, grid_width)
-# рисуем разделяющие поверхности классов
-plt.contourf(xx, yy, Z, alpha=0.5)
-# рисуем обучающую выборку
-plt.scatter(X[:, 0], X[:, 1], c=output.detach().numpy() > 0.5)
-# задаём границы отображения графика
-plt.xlim(X_left, X_right)
-plt.ylim(X_left, X_right)
+def plot_classification_results(data: torch.Tensor):
+    x_coordinates = data[:, 0]
+    y_coordinates = data[:, 1]
+    x_coordinates_diff = x_coordinates.max() - x_coordinates.min()
+    y_coordinates_diff = y_coordinates.max() - y_coordinates.min()
+    left_boundary = x_coordinates.min() - 0.1 * x_coordinates_diff
+    right_boundary = x_coordinates.max() + 0.1 * x_coordinates_diff
+    bottom_boundary = y_coordinates.min() - 0.1 * y_coordinates_diff
+    top_boundary = y_coordinates.max() + 0.1 * y_coordinates_diff
+
+    grid = np.arange(left_boundary, right_boundary, 0.01)
+    grid_width = grid.size
+    surface = []
+    # создаем точки по сетке
+    for x1 in grid:
+        for x2 in grid:
+            surface.append((x1, x2))
+    surface = np.array(surface)
+    # получаем предсказания для всех точек плоскости, модель по уже полученным
+    # весам пытается определить, какому классу принадлежит точка.
+    with torch.no_grad():
+        Z = forward(torch.Tensor(surface)).detach().numpy()
+    # меняем форму в виде двухмерного массива
+    Z = Z.reshape(grid_width, grid_width)
+    xx = surface[:, 0].reshape(grid_width, grid_width)
+    yy = surface[:, 1].reshape(grid_width, grid_width)
+    # рисуем разделяющие поверхности классов
+    plt.contourf(xx, yy, Z, alpha=0.5)
+    # рисуем обучающую выборку
+    plt.scatter(x_coordinates, y_coordinates, c=output.detach().numpy() > 0.5)
+    # задаём границы отображения графика
+    plt.xlim(left_boundary, right_boundary)
+    plt.ylim(bottom_boundary, top_boundary)
+
+
+plot_classification_results(X)
+
 
 # %% [markdown]
 """
@@ -270,9 +293,8 @@ plt.ylim(X_left, X_right)
 ### Загрузка и распаковка набора данных CIFAR100
 """
 
-
-import shutil
 # %%
+import shutil
 import urllib
 from pathlib import Path
 
