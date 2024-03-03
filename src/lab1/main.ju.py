@@ -18,8 +18,9 @@
 3. ИУ5 (Номер варианта + 21) = 14 + 21 = 35
 """
 
-# %%
 import pickle
+# %%
+from dataclasses import dataclass
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -162,97 +163,128 @@ print(cur_loss.numpy().mean())
 Генерация выборки и инициализация параметров нейронной сети
 """
 
-# %%
-from sklearn.datasets import make_circles, make_moons  # noqa
 
+# %%
+def demonstrate_dataset(X: ArrayLike, y: ArrayLike):
+    plt.scatter(X[:, 0], X[:, 1], c=y)
+
+
+# %%
 # Данные, которые стараемся классифицировать:
-# Исходная функция:
-# X = np.random.randint(2, size=(1000, 2))
-# y = (X[:, 0] + X[:, 1]) % 2  # XOR
-# X = X + np.random.normal(0, scale=0.1, size=X.shape)
+X_xor = np.random.randint(2, size=(1000, 2))
+y_xor = (X_xor[:, 0] + X_xor[:, 1]) % 2  # XOR
+X_xor = X_xor + np.random.normal(0, scale=0.1, size=X_xor.shape)
+
+demonstrate_dataset(X_xor, y_xor)
+
+# %%
+from sklearn.datasets import make_circles  # noqa
 
 # Кольца, вложенные друг в друга.
-# X, y = make_circles(n_samples=1000, noise=0.025)
+X_cirles, y_circles = make_circles(n_samples=1000, noise=0.025)
+
+demonstrate_dataset(X_cirles, y_circles)
+
+# %%
+from sklearn.datasets import make_moons  # noqa
 
 # Вложенные друг в друга месяцы.
-X, y = make_moons(n_samples=1000, noise=0.025)
+X_moons, y_moons = make_moons(n_samples=1000, noise=0.025)
 
-plt.scatter(X[:, 0], X[:, 1], c=y)
-####################################################
-tensor_X = np_to_tensor(X, size=2)
-tensor_y = np_to_tensor(y)
+demonstrate_dataset(X_moons, y_moons)
 
+# %%
 HIDDEN_SIZE = 48
 
 
-# Инициализация весов MLP с одним скрытым слоём
-def init_neural_network(hidden_size=HIDDEN_SIZE):
-    weights1 = ((torch.rand(2, hidden_size) - 0.5) / 10).detach().requires_grad_(True)
-    bias1 = torch.zeros(hidden_size, requires_grad=True)
+@dataclass()
+class NeuralNetwork:
+    def __init__(self, X: ArrayLike, y: ArrayLike, hidden_size=HIDDEN_SIZE):
+        self.tensor_X = np_to_tensor(X, size=2)
+        self.tensor_y = np_to_tensor(y)
 
-    weights2 = ((torch.rand(hidden_size, 1) - 0.5) / 10).detach().requires_grad_(True)
-    bias2 = torch.zeros(1, requires_grad=True)
+        self.hidden_size = hidden_size
+        self.weights1, self.bias1, self.weights2, self.bias2 = itemgetter(
+            "weights1", "bias1", "weights2", "bias2"
+        )(init_neural_network(hidden_size=hidden_size))
 
-    return {"weights1": weights1, "bias1": bias1, "weights2": weights2, "bias2": bias2}
+    # Инициализация весов MLP с одним скрытым слоём
+    def init_neural_network(self, hidden_size):
+        weights1 = (
+            ((torch.rand(2, hidden_size) - 0.5) / 10).detach().requires_grad_(True)
+        )
+        bias1 = torch.zeros(hidden_size, requires_grad=True)
+
+        weights2 = (
+            ((torch.rand(hidden_size, 1) - 0.5) / 10).detach().requires_grad_(True)
+        )
+        bias2 = torch.zeros(1, requires_grad=True)
+
+        return {
+            "weights1": weights1,
+            "bias1": bias1,
+            "weights2": weights2,
+            "bias2": bias2,
+        }
+
+    # Определяем функцию нелинейности
+    def sigmoid(self, x: torch.Tensor):
+        return 1 / (1 + torch.exp(-x))
+
+    # Прямой проход
+    def forward(self, x: torch.Tensor):
+        hidden = torch.mm(x, self.weights1) + self.bias1
+        hidden_nonlin = self.sigmoid(hidden)
+        output = (self.weights2.t() * hidden_nonlin).sum(
+            axis=-1, keepdims=True
+        ) + self.bias2
+
+        return self.sigmoid(output)
+
+    # Logloss
+    def loss(self, y_true: torch.Tensor, y_pred: torch.Tensor):
+        return (
+            -1
+            * (y_true * torch.log(y_pred) + (1 - y_true) * torch.log(1 - y_pred)).sum()
+        )
+
+    # lr - шаг обучения
+    def model(self, learning_rate=1e-3, iterations=10_000):
+        params = [self.weights1, self.bias1, self.weights2, self.bias2]
+        losses = []
+        for _ in range(iterations):
+            output = self.forward(self.tensor_X)
+            lossval = self.loss(self.tensor_y, output)
+            lossval.backward()  # тут включается в работу autograd
+            for w in params:
+                with torch.no_grad():
+                    w -= w.grad * learning_rate  # обновляем веса
+                w.grad.zero_()  # зануляем градиенты, чтобы не накапливались за итерации
+            losses.append(lossval.item())
+
+        self.learning_results = {"losses": losses, "output": output}
+
+        return self.learning_results
 
 
-weights1, bias1, weights2, bias2 = itemgetter("weights1", "bias1", "weights2", "bias2")(
-    init_neural_network()
-)
+classificationNN = NeuralNetwork(X_xor, y_xor)
 
 # %% [markdown]
 # ### Обучение нейронной сети задачи классификации
 
 
 # %%
-# Определяем функцию нелинейности
-def sigmoid(x: torch.Tensor):
-    return 1 / (1 + torch.exp(-x))
-
-
-# Прямой проход
-def forward(x: torch.Tensor):
-    hidden = torch.mm(x, weights1) + bias1
-    hidden_nonlin = sigmoid(hidden)
-    output = (weights2.t() * hidden_nonlin).sum(axis=-1, keepdims=True) + bias2
-
-    return sigmoid(output)
-
-
-# Logloss
-def loss(y_true: torch.Tensor, y_pred: torch.Tensor):
-    return (
-        -1 * (y_true * torch.log(y_pred) + (1 - y_true) * torch.log(1 - y_pred)).sum()
-    )
-
-
-# lr - шаг обучения
-def model(learning_rate=1e-3, iterations=10_000):
-    params = [weights1, bias1, weights2, bias2]
-    losses = []
-    for _ in range(iterations):
-        output = forward(tensor_X)
-        lossval = loss(tensor_y, output)
-        lossval.backward()  # тут включается в работу autograd
-        for w in params:
-            with torch.no_grad():
-                w -= w.grad * learning_rate  # обновляем веса
-            w.grad.zero_()  # зануляем градиенты, чтобы не накапливались за итерации
-        losses.append(lossval.item())
-
-    return {'losses': losses, 'output': output}
-
-
-learning_results = model()
+learning_results = classificationNN.model()
 # выводим историю функции потерь по итерациям
-plt.plot(learning_results['losses'])
+plt.plot(learning_results["losses"])
 
 
 # %% [markdown]
 # ### Проверка результатов обучения
 
+
 # %%
-def plot_classification_results(data: torch.Tensor):
+def plot_classification_results(data: torch.Tensor, neural_model: NeuralNetwork):
     x_coordinates = data[:, 0]
     y_coordinates = data[:, 1]
     x_coordinates_diff = x_coordinates.max() - x_coordinates.min()
@@ -273,7 +305,7 @@ def plot_classification_results(data: torch.Tensor):
     # получаем предсказания для всех точек плоскости, модель по уже полученным
     # весам пытается определить, какому классу принадлежит точка.
     with torch.no_grad():
-        Z = forward(torch.Tensor(surface)).detach().numpy()
+        Z = neural_model.forward(torch.Tensor(surface)).detach().numpy()
     # меняем форму в виде двухмерного массива
     Z = Z.reshape(grid_width, grid_width)
     xx = surface[:, 0].reshape(grid_width, grid_width)
@@ -281,19 +313,41 @@ def plot_classification_results(data: torch.Tensor):
     # рисуем разделяющие поверхности классов
     plt.contourf(xx, yy, Z, alpha=0.5)
     # рисуем обучающую выборку
-    plt.scatter(x_coordinates, y_coordinates, c=learning_results['output'].detach().numpy() > 0.5)
+    plt.scatter(
+        x_coordinates,
+        y_coordinates,
+        c=neural_model.learning_results["output"].detach().numpy() > 0.5,
+    )
     # задаём границы отображения графика
     plt.xlim(left_boundary, right_boundary)
     plt.ylim(bottom_boundary, top_boundary)
 
 
-plot_classification_results(X)
+plot_classification_results(X_xor, classificationNN)
+
+# %%
+for hidden_size in [16, 32, 48, 64, 80]:
+    print(f"{hidden_size = }")
+    classificationNN = NeuralNetwork(X_cirles, y_circles, hidden_size)
+    classificationNN.model()
+    plt.figure()
+    plot_classification_results(X_cirles, classificationNN)
+    plt.show()
+
+# %%
+for hidden_size in [16, 32, 48, 64, 80]:
+    print(f"{hidden_size = }")
+    classificationNN = NeuralNetwork(X_moons, y_moons, hidden_size)
+    classificationNN.model()
+    plt.figure()
+    plot_classification_results(X_moons, classificationNN)
+    plt.show()
 
 # %% [markdown]
 """
-Наша нейронная сеть с 16 нейронами в скрытом слое справилась с XOR
-и кольцами. С лунами - нет. Увеличение количества нейронов до 32 не дало улучшения результата,
-до 48 - дало.
+### Вывод
+Наша нейронная сеть с 16 нейронами в скрытом слое справилась с классификацией XOR.
+Для колец понадобилось увеличить количество нейронов до 80. Для лун - до 48.
 """
 
 # %% [markdown]
@@ -361,7 +415,9 @@ test_y = np.unique(test_y, return_inverse=1)[1]
 del data_test
 
 # По экземпляру класса из выборки.
-for class_index, _ in enumerate(CLASSES):  # Берём именно индексы, так как классы, которые мы выбрали, в итоге нормировались в 0, 1, 2.
+for class_index, _ in enumerate(
+    CLASSES
+):  # Берём именно индексы, так как классы, которые мы выбрали, в итоге нормировались в 0, 1, 2.
     image_index_for_class = train_y.tolist().index(class_index)
     display(Image.fromarray(train_X[image_index_for_class]).resize((256, 256)))
 
