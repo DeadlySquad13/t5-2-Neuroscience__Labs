@@ -357,6 +357,7 @@ for hidden_size in [16, 32, 48, 64, 80]:
 """
 
 # %%
+import os
 import shutil
 import urllib
 from pathlib import Path
@@ -369,9 +370,10 @@ data_path.mkdir(exist_ok=True)
 
 file_path = data_path / filename
 
-urllib.request.urlretrieve(url, file_path)
-shutil.unpack_archive(file_path, extract_dir=data_path)
-file_path.unlink()  # Remove archive after extracting it.
+if not os.path.isfile(file_path):
+    urllib.request.urlretrieve(url, file_path)
+    shutil.unpack_archive(file_path, extract_dir=data_path)
+    file_path.unlink()  # Remove archive after extracting it.
 
 
 # %% [markdown]
@@ -396,12 +398,12 @@ with open(dataset_path / "test", "rb") as f:
 # Классы по варианту.
 CLASSES = [17, 70, 35]
 
-train_X = data_train["data"].reshape(-1, 3, 32, 32)
-train_X = np.transpose(train_X, [0, 2, 3, 1])  # NCHW -> NHWC
-train_y = np.array(data_train["fine_labels"])
-mask = np.isin(train_y, CLASSES)
-train_X = train_X[mask].copy()
-train_y = train_y[mask].copy()
+train_X_raw = data_train["data"].reshape(-1, 3, 32, 32)
+train_X_raw = np.transpose(train_X_raw, [0, 2, 3, 1])  # NCHW -> NHWC
+train_y_raw = np.array(data_train["fine_labels"])
+mask = np.isin(train_y_raw, CLASSES)
+train_X = train_X_raw[mask].copy()
+train_y = train_y_raw[mask].copy()
 train_y = np.unique(train_y, return_inverse=1)[1]
 del data_train
 
@@ -414,12 +416,51 @@ test_y = test_y[mask].copy()
 test_y = np.unique(test_y, return_inverse=1)[1]
 del data_test
 
-# По экземпляру класса из выборки.
-for class_index, _ in enumerate(
-    CLASSES
-):  # Берём именно индексы, так как классы, которые мы выбрали, в итоге нормировались в 0, 1, 2.
-    image_index_for_class = train_y.tolist().index(class_index)
-    display(Image.fromarray(train_X[image_index_for_class]).resize((256, 256)))
+# print(train_y_raw.tolist())
+
+
+# %%
+def createImage(data: ArrayLike):
+    return Image.fromarray(data).resize((256, 256))
+
+
+# %%
+def grid_display(list_of_images, list_of_titles=[], no_of_columns=2, figsize=(10, 10)):
+    fig = plt.figure(figsize=figsize)
+    column = 0
+    for i in range(len(list_of_images)):
+        column += 1
+        #  check for end of column and create a new figure
+        if column == no_of_columns + 1:
+            fig = plt.figure(figsize=figsize)
+            column = 1
+        fig.add_subplot(1, no_of_columns, column)
+        plt.imshow(list_of_images[i])
+        plt.axis("off")
+        if len(list_of_titles) >= len(list_of_images):
+            plt.title(list_of_titles[i])
+
+
+# %%
+# По 3 экземпляра класса из выборки.
+number_of_images_per_class_to_show = 3
+
+for class_id in CLASSES:
+    print(f"{class_id = }:")
+    i = number_of_images_per_class_to_show
+    image_index_for_class = -1
+    class_images = []
+    image_indices = []
+
+    while i > 0:
+        image_index_for_class = train_y_raw.tolist().index(
+            class_id, image_index_for_class + 1
+        )
+        image_indices.append(image_index_for_class)
+        class_images.append(createImage(train_X_raw[image_index_for_class]))
+        i -= 1
+    grid_display(class_images, image_indices, number_of_images_per_class_to_show)
+    plt.show()
 
 # %% [markdown]
 # ### Создание Pytorch DataLoader'a
