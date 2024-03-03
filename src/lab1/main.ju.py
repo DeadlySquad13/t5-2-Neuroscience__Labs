@@ -18,8 +18,8 @@
 3. ИУ5 (Номер варианта + 21) = 14 + 21 = 35
 """
 
-import pickle
 # %%
+import pickle
 from dataclasses import dataclass
 
 import matplotlib.pyplot as plt
@@ -206,7 +206,7 @@ class NeuralNetwork:
         self.hidden_size = hidden_size
         self.weights1, self.bias1, self.weights2, self.bias2 = itemgetter(
             "weights1", "bias1", "weights2", "bias2"
-        )(init_neural_network(hidden_size=hidden_size))
+        )(self.init_neural_network(hidden_size=hidden_size))
 
     # Инициализация весов MLP с одним скрытым слоём
     def init_neural_network(self, hidden_size):
@@ -302,6 +302,7 @@ def plot_classification_results(data: torch.Tensor, neural_model: NeuralNetwork)
         for x2 in grid:
             surface.append((x1, x2))
     surface = np.array(surface)
+    print(surface.shape)
     # получаем предсказания для всех точек плоскости, модель по уже полученным
     # весам пытается определить, какому классу принадлежит точка.
     with torch.no_grad():
@@ -662,6 +663,20 @@ dataloader = train_classifier(model, epochs=51)
 compare_classification_reports(dataloader)
 
 # %% [markdown]
+# ### Визуализация весов
+
+# %%
+weights = list(model.parameters())[0].detach().numpy()
+print(weights.shape)
+fig, ax = plt.subplots(1, weights.shape[0], figsize=(3 * weights.shape[0], 3))
+for i, ω in enumerate(weights):
+    ω = ω.reshape(32, 32, 3)
+    ω -= np.percentile(ω, 1, axis=[0, 1])
+    ω /= np.percentile(ω, 99, axis=[0, 1])
+    ω = np.clip(ω, 0, 1)
+    ax[i].imshow(ω)
+
+# %% [markdown]
 # По логам потерь было выяснено, что переобучение для данной модели
 # начинается на 52 эпохах, поэтому оставим 51.
 
@@ -730,17 +745,3 @@ class Cifar100_MLP_2(nn.Module):
 model = Cifar100_MLP_2(classes=len(CLASSES))
 dataloader = train_classifier(model, learning_rate=0.0025, epochs=233, batch_size=256)
 compare_classification_reports(dataloader)
-
-# %% [markdown]
-# ### Визуализация весов
-
-# %%
-weights = list(model.parameters())[0].detach().numpy()
-print(weights.shape)
-fig, ax = plt.subplots(1, weights.shape[0], figsize=(3 * weights.shape[0], 3))
-for i, ω in enumerate(weights):
-    ω = ω.reshape(32, 32, 3)
-    ω -= np.percentile(ω, 1, axis=[0, 1])
-    ω /= np.percentile(ω, 99, axis=[0, 1])
-    ω = np.clip(ω, 0, 1)
-    ax[i].imshow(ω)
