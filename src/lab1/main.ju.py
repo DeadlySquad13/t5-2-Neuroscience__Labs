@@ -425,6 +425,7 @@ def createImage(data: ArrayLike):
 
 
 # %%
+# Source: https://stackoverflow.com/a/47334314
 def grid_display(list_of_images, list_of_titles=[], no_of_columns=2, figsize=(10, 10)):
     fig = plt.figure(figsize=figsize)
     column = 0
@@ -465,19 +466,22 @@ for class_id in CLASSES:
 # %% [markdown]
 # ### Создание Pytorch DataLoader'a
 
+
 # %%
-batch_size = 128
-dataloader = {}
-for (X, y), part in zip([(train_X, train_y), (test_X, test_y)], ["train", "test"]):
-    tensor_x = torch.Tensor(X)
-    tensor_y = (
-        F.one_hot(torch.Tensor(y).to(torch.int64), num_classes=len(CLASSES)) / 1.0
-    )
-    dataset = TensorDataset(tensor_x, tensor_y)  # создание объекта датасета
-    dataloader[part] = DataLoader(
-        dataset, batch_size=batch_size, shuffle=True
-    )  # создание экземпляра класса DataLoader
-dataloader
+def create_dataloader(batch_size=128):
+    dataloader: dict[str, DataLoader] = {}
+    for (X, y), part in zip([(train_X, train_y), (test_X, test_y)], ["train", "test"]):
+        tensor_x = torch.Tensor(X)
+        tensor_y = (
+            F.one_hot(torch.Tensor(y).to(torch.int64), num_classes=len(CLASSES)) / 1.0
+        )
+        dataset = TensorDataset(tensor_x, tensor_y)  # создание объекта датасета
+        dataloader[part] = DataLoader(
+            dataset, batch_size=batch_size, shuffle=True
+        )  # создание экземпляра класса DataLoader
+
+    return dataloader
+
 
 # %% [markdown]
 # ### Создание Pytorch модели многослойного перцептрона с одним скрытым слоем
@@ -520,62 +524,92 @@ model = Cifar100_MLP(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
 model
 
 # %% [markdown]
-# ### Выбор функции потерь и оптимизатора градиентного спуска
-
-# %%
-criterion = nn.CrossEntropyLoss()
-optimizer = optim.SGD(model.parameters(), lr=0.005)
-
-# %% [markdown]
 # ### Обучение модели по эпохам
 
 # %%
 EPOCHS = 250
-steps_per_epoch = len(dataloader["train"])
-steps_per_epoch_val = len(dataloader["test"])
-for epoch in range(EPOCHS):  # проход по набору данных несколько раз
-    running_loss = 0.0
-    model.train()
-    for i, batch in enumerate(dataloader["train"], 0):
-        # получение одного минибатча; batch это двуэлементный список из [inputs, labels]
-        inputs, labels = batch
 
-        # очищение прошлых градиентов с прошлой итерации
-        optimizer.zero_grad()
 
-        # прямой + обратный проходы + оптимизация
-        outputs = model(inputs)
-        loss = criterion(outputs, labels)
-        # loss = F.cross_entropy(outputs, labels)
-        loss.backward()
-        optimizer.step()
+def train(
+    model: nn.Module,
+    criterion: nn.CrossEntropyLoss,
+    optimizer: optim.Optimizer,
+    dataloader: dict[str, DataLoader],
+    epochs=EPOCHS,
+):
+    steps_per_epoch = len(dataloader["train"])
+    steps_per_epoch_val = len(dataloader["test"])
 
-        # для подсчёта статистик
-        running_loss += loss.item()
-    print(f"[{epoch + 1}, {i + 1:5d}] loss: {running_loss / steps_per_epoch:.3f}")
-    running_loss = 0.0
-    model.eval()
-    with torch.no_grad():  # отключение автоматического дифференцирования
-        for i, data in enumerate(dataloader["test"], 0):
-            inputs, labels = data
+    for epoch in range(epochs):  # проход по набору данных несколько раз
+        running_loss = 0.0
+        model.train()
+        for i, batch in enumerate(dataloader["train"], 0):
+            # получение одного минибатча; batch это двуэлементный список из [inputs, labels]
+            inputs, labels = batch
 
+            # очищение прошлых градиентов с прошлой итерации
+            optimizer.zero_grad()
+
+            # прямой + обратный проходы + оптимизация
             outputs = model(inputs)
             loss = criterion(outputs, labels)
+            # loss = F.cross_entropy(outputs, labels)
+            loss.backward()
+            optimizer.step()
+
+            # для подсчёта статистик
             running_loss += loss.item()
-    print(
-        f"[{epoch + 1}, {i + 1:5d}] val loss: {running_loss / steps_per_epoch_val:.3f}"
+        print(f"[{epoch + 1}, {i + 1:5d}] loss: {running_loss / steps_per_epoch:.3f}")
+        running_loss = 0.0
+        model.eval()
+        with torch.no_grad():  # отключение автоматического дифференцирования
+            for i, data in enumerate(dataloader["test"], 0):
+                inputs, labels = data
+
+                outputs = model(inputs)
+                loss = criterion(outputs, labels)
+                running_loss += loss.item()
+        print(
+            f"[{epoch + 1}, {i + 1:5d}] val loss: {running_loss / steps_per_epoch_val:.3f}"
+        )
+    print("Обучение закончено")
+
+    return dataloader
+
+
+# %% [markdown]
+# ### Выбор функции потерь и оптимизатора градиентного спуска
+
+
+# %%
+def train_classifier(
+    model: nn.Module, learning_rate=0.005, batch_size=128, epochs=EPOCHS
+):
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.SGD(model.parameters(), lr=learning_rate)
+    dataloader = create_dataloader(batch_size=batch_size)
+
+    return train(
+        model,
+        criterion=criterion,
+        optimizer=optimizer,
+        dataloader=dataloader,
+        epochs=epochs,
     )
-print("Обучение закончено")
+
+
+dataloader = train_classifier(model)
 
 # %% [markdown]
 # ### Проверка качества модели по классам на обучающей и тестовой выборках
 
+
 # %%
-for part in ["train", "test"]:
+def report_classification_results(dataloader: DataLoader):
     y_pred = []
     y_true = []
     with torch.no_grad():  # отключение автоматического дифференцирования
-        for i, data in enumerate(dataloader[part], 0):
+        for _, data in enumerate(dataloader, 0):
             inputs, labels = data
 
             outputs = model(inputs).detach().numpy()
@@ -583,7 +617,6 @@ for part in ["train", "test"]:
             y_true.append(labels.numpy())
         y_true = np.concatenate(y_true)
         y_pred = np.concatenate(y_pred)
-        print(part)
         print(
             classification_report(
                 y_true.argmax(axis=-1),
@@ -592,7 +625,111 @@ for part in ["train", "test"]:
                 target_names=list(map(str, CLASSES)),
             )
         )
-        print("-" * 50)
+
+
+# %%
+def compare_classification_reports(dataloader: dict[str, DataLoader]):
+    for part in ["train", "test"]:
+        print(part)
+        report_classification_results(dataloader[part])
+        part != "test" and print("-" * 53)
+
+
+compare_classification_reports(dataloader)
+
+# %% [markdown]
+"""
+### Анализ результатов обучения модели
+Как видно, лучше всего был предсказан класс с идентификатором 17, представляющий
+собой замки. Вероятнее всего это связано с количеством общих уникальных черт объектов
+на картинках: у замков их намного меньше по сравнению с, например, ребёнком,
+который может быть разного возраста, расы и может быть одет по-разному.
+"""
+
+# %% [markdown]
+"""
+На лицо так же переобучение: в обучающей выборке характеристики были почти идеальными,
+а в тестовых данных для некоторых классов средними. Скорректируем параметры для устранения
+этого феномена в надежде улучшить качество модели.
+"""
+
+# %% [markdown]
+# Уменьшим количество эпох.
+
+# %%
+model = Cifar100_MLP(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
+dataloader = train_classifier(model, epochs=51)
+compare_classification_reports(dataloader)
+
+# %% [markdown]
+# По логам потерь было выяснено, что переобучение для данной модели
+# начинается на 52 эпохах, поэтому оставим 51.
+
+# %% [markdown]
+# Изменим batch_size, сохраняя общее количество итераций. Для этого количество
+# эпох уменьшим в то же количество раз, во сколько увеличили batch_size.
+
+# %%
+model = Cifar100_MLP(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
+dataloader = train_classifier(model, epochs=25, batch_size=256)
+compare_classification_reports(dataloader)
+
+# %% [markdown]
+# Общие метрики модели на тестовой выборке не сильно поменялись, однако
+# отношение значений обучающий к тестовой выборке очень близко к 1. Можно
+# с уверенностью сказать, что на данном этапе переобучения не наблюдается.
+
+# %% [markdown]
+# Постараемся ещё улучшить модель:
+# уменьшим скорость обучения и увеличим общее количество итераций.
+
+# %% [markdown]
+# Для уменьшенной в два раза скорости обучения, переобучение началось в районе
+# 78-79 эпох. Поставив 77 эпохи мы достигли точности:
+
+# %%
+model = Cifar100_MLP(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
+dataloader = train_classifier(model, learning_rate=0.0025, epochs=77, batch_size=256)
+compare_classification_reports(dataloader)
+
+# %% [markdown]
+# Поменяем количество нейронов в скрытом слое. Так как модель из-за этого
+# значительно поменяем, подстроим остальные гиперпараметры для устранения
+# переобучения и постараемся найти максимум, которого может достигичь модель.
+
+# %%
+model = Cifar100_MLP(hidden_size=2 * HIDDEN_SIZE, classes=len(CLASSES))
+dataloader = train_classifier(model, learning_rate=0.0025, epochs=88, batch_size=256)
+compare_classification_reports(dataloader)
+
+# %% [markdown]
+# Добавим ещё один скрытый слой.
+
+
+# %%
+class Cifar100_MLP_2(nn.Module):
+    def __init__(self, hidden_sizes=[32, 26], classes=100):
+        super(Cifar100_MLP_2, self).__init__()
+        # https://blog.jovian.ai/image-classification-of-cifar100-dataset-using-pytorch-8b7145242df1
+        self.norm = Normalize([0.5074, 0.4867, 0.4411], [0.2011, 0.1987, 0.2025])
+        self.seq = nn.Sequential(
+            nn.Linear(32 * 32 * 3, hidden_sizes[0]),
+            nn.ReLU(),
+            nn.Linear(hidden_sizes[0], hidden_sizes[1]),
+            nn.ReLU(),
+            nn.Linear(hidden_sizes[1], classes),
+        )
+
+    def forward(self, input):
+        x = self.norm(input)
+
+        return self.seq(x)
+
+
+# %%
+model = Cifar100_MLP_2(classes=len(CLASSES))
+dataloader = train_classifier(model, learning_rate=0.0025, epochs=233, batch_size=256)
+compare_classification_reports(dataloader)
 
 # %% [markdown]
 # ### Визуализация весов
