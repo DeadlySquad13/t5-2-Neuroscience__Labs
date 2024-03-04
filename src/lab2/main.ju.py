@@ -236,6 +236,7 @@ model
 # ### Обучение модели по эпохам
 
 # %%
+REDRAW_EVERY = 20
 EPOCHS = 250
 
 
@@ -249,8 +250,13 @@ def train(
     steps_per_epoch = len(dataloader["train"])
     steps_per_epoch_val = len(dataloader["test"])
 
+    # New
+    pbar = tqdm(total=epochs * steps_per_epoch)
+    losses = []
+    losses_val = []
+    passed = 0
     for epoch in range(epochs):  # проход по набору данных несколько раз
-        running_loss = 0.0
+        tmp = []
         model.train()
         for i, batch in enumerate(dataloader["train"], 0):
             # получение одного минибатча; batch это двуэлементный список из [inputs, labels]
@@ -267,22 +273,63 @@ def train(
             optimizer.step()
 
             # для подсчёта статистик
-            running_loss += loss.item()
-        print(f"[{epoch + 1}, {i + 1:5d}] loss: {running_loss / steps_per_epoch:.3f}")
-        running_loss = 0.0
+            accuracy = (
+                labels.detach().argmax(dim=-1) == outputs.detach().argmax(dim=-1)
+            ).to(torch.float32).mean().cpu() * 100
+            tmp.append((loss.item(), accuracy.item()))
+            pbar.update(1)
+        losses.append(
+            (
+                np.mean(tmp, axis=0),
+                np.percentile(tmp, 25, axis=0),
+                np.percentile(tmp, 75, axis=0),
+            )
+        )
+        tmp = []
         model.eval()
         with torch.no_grad():  # отключение автоматического дифференцирования
             for i, data in enumerate(dataloader["test"], 0):
                 inputs, labels = data
+                # на GPU
+                # inputs, labels = inputs.to(device), labels.to(device)
 
                 outputs = model(inputs)
                 loss = criterion(outputs, labels)
-                running_loss += loss.item()
-        print(
-            f"[{epoch + 1}, {i + 1:5d}] val loss: {running_loss / steps_per_epoch_val:.3f}"
+                accuracy = (labels.argmax(dim=-1) == outputs.argmax(dim=-1)).to(
+                    torch.float32
+                ).mean().cpu() * 100
+                tmp.append((loss.item(), accuracy.item()))
+        losses_val.append(
+            (
+                np.mean(tmp, axis=0),
+                np.percentile(tmp, 25, axis=0),
+                np.percentile(tmp, 75, axis=0),
+            )
         )
-    print("Обучение закончено")
+        if (epoch + 1) % REDRAW_EVERY != 0:
+            continue
+        clear_output(wait=False)
+        passed += pbar.format_dict["elapsed"]
+        pbar = tqdm(total=EPOCHS * steps_per_epoch, miniters=5)
+        pbar.update((epoch + 1) * steps_per_epoch)
+        x_vals = np.arange(epoch + 1)
+        _, ax = plt.subplots(1, 2, figsize=(15, 5))
+        stats = np.array(losses)
+        stats_val = np.array(losses_val)
+        ax[1].set_ylim(stats_val[:, 0, 1].min() - 5, 100)
+        ax[1].grid(axis="y")
+        for i, title in enumerate(["CCE", "Accuracy"]):
+            ax[i].plot(x_vals, stats[:, 0, i], label="train")
+            ax[i].fill_between(x_vals, stats[:, 1, i], stats[:, 2, i], alpha=0.4)
+            ax[i].plot(x_vals, stats_val[:, 0, i], label="val")
+            ax[i].fill_between(
+                x_vals, stats_val[:, 1, i], stats_val[:, 2, i], alpha=0.4
+            )
+            ax[i].legend()
+            ax[i].set_title(title)
+        plt.show()
 
+    print("Обучение закончено за %s секунд" % passed)
     return dataloader
 
 
@@ -292,10 +339,10 @@ def train(
 
 # %%
 def train_classifier(
-    model: nn.Module, learning_rate=0.005, batch_size=128, epochs=EPOCHS
+    model: nn.Module, learning_rate=5e-3, batch_size=128, epochs=EPOCHS, momentum=0.9
 ):
     criterion = nn.CrossEntropyLoss()
-    optimizer = optim.SGD(model.parameters(), lr=learning_rate)
+    optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum)
     dataloader = create_dataloader(batch_size=batch_size)
 
     return train(
