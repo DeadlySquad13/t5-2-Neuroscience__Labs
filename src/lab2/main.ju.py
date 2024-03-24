@@ -55,15 +55,15 @@ from pathlib import Path
 
 url = "https://www.cs.toronto.edu/~kriz/cifar-100-python.tar.gz"
 filename = "cifar-100-python.tar.gz"
-data_path = Path("data")
+model_path = Path("data")
 
-data_path.mkdir(exist_ok=True)
+model_path.mkdir(exist_ok=True)
 
-file_path = data_path / filename
+file_path = model_path / filename
 
 if not os.path.isfile(file_path):
     urllib.request.urlretrieve(url, file_path)
-    shutil.unpack_archive(file_path, extract_dir=data_path)
+    shutil.unpack_archive(file_path, extract_dir=model_path)
     file_path.unlink()  # Remove archive after extracting it.
 
 
@@ -230,7 +230,8 @@ model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
 model.to(device)
 print(model(torch.rand(1, 32, 32, 3).to(device)))
 summary(model, input_size=(32, 32, 3))
-model
+weights = list(model.parameters())[0].detach().numpy()
+weights.shape
 
 # %% [markdown]
 # ### Обучение модели по эпохам
@@ -367,8 +368,10 @@ def report_classification_results(dataloader: DataLoader):
     with torch.no_grad():  # отключение автоматического дифференцирования
         for _, data in enumerate(dataloader, 0):
             inputs, labels = data
+            # на GPU
+            # inputs, labels = inputs.to(device), labels.to(device)
 
-            outputs = model(inputs).detach().numpy()
+            outputs = model(inputs).detach().cpu().numpy()
             y_pred.append(outputs)
             y_true.append(labels.numpy())
         y_true = np.concatenate(y_true)
@@ -414,89 +417,155 @@ compare_classification_reports(dataloader)
 
 # %%
 model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
-dataloader = train_classifier(model, epochs=51)
+dataloader = train_classifier(model, epochs=500)
 compare_classification_reports(dataloader)
-
-# %% [markdown]
-# ### Визуализация весов
-
-# %%
-weights = list(model.parameters())[0].detach().numpy()
-print(weights.shape)
-fig, ax = plt.subplots(1, weights.shape[0], figsize=(3 * weights.shape[0], 3))
-for i, ω in enumerate(weights):
-    ω = ω.reshape(32, 32, 3)
-    ω -= np.percentile(ω, 1, axis=[0, 1])
-    ω /= np.percentile(ω, 99, axis=[0, 1])
-    ω = np.clip(ω, 0, 1)
-    ax[i].imshow(ω)
-
-# %% [markdown]
-# По логам потерь было выяснено, что переобучение для данной модели
-# начинается на 52 эпохах, поэтому оставим 51.
-
-# %% [markdown]
-# Изменим batch_size, сохраняя общее количество итераций. Для этого количество
-# эпох уменьшим в то же количество раз, во сколько увеличили batch_size.
 
 # %%
 model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
-dataloader = train_classifier(model, epochs=25, batch_size=256)
+dataloader = train_classifier(model, epochs=150)
 compare_classification_reports(dataloader)
-
-# %% [markdown]
-# Общие метрики модели на тестовой выборке не сильно поменялись, однако
-# отношение значений обучающий к тестовой выборке очень близко к 1. Можно
-# с уверенностью сказать, что на данном этапе переобучения не наблюдается.
-
-# %% [markdown]
-# Постараемся ещё улучшить модель:
-# уменьшим скорость обучения и увеличим общее количество итераций.
-
-# %% [markdown]
-# Для уменьшенной в два раза скорости обучения, переобучение началось в районе
-# 78-79 эпох. Поставив 77 эпохи мы достигли точности:
 
 # %%
 model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
-dataloader = train_classifier(model, learning_rate=0.0025, epochs=77, batch_size=256)
+dataloader = train_classifier(model, epochs=160)
 compare_classification_reports(dataloader)
 
 # %% [markdown]
-# Поменяем количество нейронов в скрытом слое. Так как модель из-за этого
-# значительно поменяем, подстроим остальные гиперпараметры для устранения
-# переобучения и постараемся найти максимум, которого может достигичь модель.
-
-# %%
-model = Cifar100_CNN(hidden_size=2 * HIDDEN_SIZE, classes=len(CLASSES))
-dataloader = train_classifier(model, learning_rate=0.0025, epochs=88, batch_size=256)
-compare_classification_reports(dataloader)
-
-# %% [markdown]
-# Добавим ещё один скрытый слой.
+# Изменим конфигурацию модели.
 
 
 # %%
-class Cifar100_CNN_2(nn.Module):
-    def __init__(self, hidden_sizes=[32, 26], classes=100):
-        super(Cifar100_CNN_2, self).__init__()
+class Cifar100_CNN(nn.Module):
+    def __init__(self, hidden_size=HIDDEN_SIZE, classes=100):
+        super(Cifar100_CNN, self).__init__()
         # https://blog.jovian.ai/image-classification-of-cifar100-dataset-using-pytorch-8b7145242df1
-        self.norm = Normalize([0.5074, 0.4867, 0.4411], [0.2011, 0.1987, 0.2025])
         self.seq = nn.Sequential(
-            nn.Linear(32 * 32 * 3, hidden_sizes[0]),
+            Normalize([0.5074, 0.4867, 0.4411], [0.2011, 0.1987, 0.2025]),
+            # первый способ уменьшения размерности картинки - через stride
+            nn.Conv2d(3, hidden_size, 5, stride=2, padding=2),
             nn.ReLU(),
-            nn.Linear(hidden_sizes[0], hidden_sizes[1]),
+            # второй способ уменьшения размерности картинки - через слой пуллинг
+            nn.Conv2d(hidden_size, hidden_size * 2, 3, stride=2, padding=1),
             nn.ReLU(),
-            nn.Linear(hidden_sizes[1], classes),
+            nn.AvgPool2d(4),  # nn.MaxPool2d(4),
+            nn.Flatten(),
+            nn.Linear(hidden_size * 8, classes),
         )
 
     def forward(self, input):
-        x = self.norm(input)
+        return self.seq(input)
 
-        return self.seq(x)
+
+model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
+print(model)
+dataloader = train_classifier(model, epochs=160)
+compare_classification_reports(dataloader)
+
+# %%
+model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
+print(model)
+dataloader = train_classifier(model, batch_size=256, epochs=80)
+compare_classification_reports(dataloader)
+
+# %%
+model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
+print(model)
+dataloader = train_classifier(model, batch_size=64, epochs=320)
+compare_classification_reports(dataloader)
+
+# %%
+model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
+print(model)
+dataloader = train_classifier(model, batch_size=64, epochs=110)
+compare_classification_reports(dataloader)
 
 
 # %%
-model = Cifar100_CNN_2(classes=len(CLASSES))
-dataloader = train_classifier(model, learning_rate=0.0025, epochs=233, batch_size=256)
+class Cifar100_CNN_3(nn.Module):
+    def __init__(self, hidden_size=HIDDEN_SIZE, classes=100):
+        super(Cifar100_CNN, self).__init__()
+        # https://blog.jovian.ai/image-classification-of-cifar100-dataset-using-pytorch-8b7145242df1
+        self.seq = nn.Sequential(
+            Normalize([0.5074, 0.4867, 0.4411], [0.2011, 0.1987, 0.2025]),
+            # первый способ уменьшения размерности картинки - через stride
+            nn.Conv2d(3, hidden_size, 5, stride=2, padding=2),
+            nn.ReLU(),
+            # второй способ уменьшения размерности картинки - через слой пуллинг
+            nn.Conv2d(hidden_size, hidden_size * 2, 3, stride=2, padding=1),
+            nn.ReLU(),
+            nn.Conv2d(hidden_size * 2, hidden_size * 3, 3, stride=2, padding=1),
+            nn.ReLU(),
+            nn.AvgPool2d(4),  # nn.MaxPool2d(4),
+            nn.Flatten(),
+            nn.Linear(hidden_size * 8, classes),
+        )
+
+    def forward(self, input):
+        return self.seq(input)
+
+
+model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
+print(model)
+dataloader = train_classifier(model, epochs=160)
 compare_classification_reports(dataloader)
+
+# %%
+model_path = Path("models")
+model_filename = "cifar_cnn.pt"
+
+model_path.mkdir(exist_ok=True)
+
+model_file_path = model_path / model_filename
+
+torch.save(model, model_file_path)
+# загрузка
+new_model_2 = torch.load(model_file_path)
+new_model_2.eval()
+
+# %%
+# входной тензор для модели
+onnx_model_filename = "cifar100_cnn.onnx"
+x = torch.randn(1, 32, 32, 3, requires_grad=True).to(device)
+torch_out = model(x)
+
+# экспорт модели
+torch.onnx.export(
+    model,  # модель
+    x,  # входной тензор (или кортеж нескольких тензоров)
+    model_path/onnx_model_filename,  # куда сохранить (либо путь к файлу либо fileObject)
+    export_params=True,  # сохраняет веса обученных параметров внутри файла модели
+    opset_version=9,  # версия ONNX
+    do_constant_folding=True,  # следует ли выполнять укорачивание констант для оптимизации
+    input_names=["input"],  # имя входного слоя
+    output_names=["output"],  # имя выходного слоя
+    dynamic_axes={
+        "input": {
+            0: "batch_size"
+        },  # динамичные оси, в данном случае только размер пакета
+        "output": {0: "batch_size"},
+    },
+)
+
+# %%
+# входной тензор для модели
+onnx_model_filename = "cifar100_fc.onnx"
+x = torch.randn(1, 32, 32, 3, requires_grad=True).to(device)
+torch_out = model(x)
+
+# экспорт модели
+torch.onnx.export(
+    model,  # модель
+    x,  # входной тензор (или кортеж нескольких тензоров)
+    model_path/onnx_model_filename,  # куда сохранить (либо путь к файлу либо fileObject)
+    export_params=True,  # сохраняет веса обученных параметров внутри файла модели
+    opset_version=9,  # версия ONNX
+    do_constant_folding=True,  # следует ли выполнять укорачивание констант для оптимизации
+    input_names=["input"],  # имя входного слоя
+    output_names=["output"],  # имя выходного слоя
+    dynamic_axes={
+        "input": {
+            0: "batch_size"
+        },  # динамичные оси, в данном случае только размер пакета
+        "output": {0: "batch_size"},
+    },
+)
