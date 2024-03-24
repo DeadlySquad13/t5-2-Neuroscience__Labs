@@ -745,3 +745,28 @@ class Cifar100_MLP_2(nn.Module):
 model = Cifar100_MLP_2(classes=len(CLASSES))
 dataloader = train_classifier(model, learning_rate=0.0025, epochs=233, batch_size=256)
 compare_classification_reports(dataloader)
+
+
+# %%
+# входной тензор для модели
+onnx_model_filename = "cifar100_cnn.onnx"
+x = torch.randn(1, 32, 32, 3, requires_grad=True).to(device)
+torch_out = model(x)
+
+# экспорт модели
+torch.onnx.export(
+    model,  # модель
+    x,  # входной тензор (или кортеж нескольких тензоров)
+    model_path/onnx_model_filename,  # куда сохранить (либо путь к файлу либо fileObject)
+    export_params=True,  # сохраняет веса обученных параметров внутри файла модели
+    opset_version=9,  # версия ONNX
+    do_constant_folding=True,  # следует ли выполнять укорачивание констант для оптимизации
+    input_names=["input"],  # имя входного слоя
+    output_names=["output"],  # имя выходного слоя
+    dynamic_axes={
+        "input": {
+            0: "batch_size"
+        },  # динамичные оси, в данном случае только размер пакета
+        "output": {0: "batch_size"},
+    },
+)
