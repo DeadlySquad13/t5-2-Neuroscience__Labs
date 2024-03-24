@@ -431,23 +431,27 @@ dataloader = train_classifier(model, epochs=160)
 compare_classification_reports(dataloader)
 
 # %% [markdown]
-# Изменим конфигурацию модели.
+# ## Изменим конфигурацию модели свёрточной сети
+
+# %% [markdown]
+"""
+### 1. Поменяем тактику пуллинга
+Пуллинг с помощью шага свёртки stride.
+
+Отдельные пуллинг слои уберём, оставим свёрточные со stride > kernel.
+"""
 
 
 # %%
 class Cifar100_CNN(nn.Module):
     def __init__(self, hidden_size=HIDDEN_SIZE, classes=100):
         super(Cifar100_CNN, self).__init__()
-        # https://blog.jovian.ai/image-classification-of-cifar100-dataset-using-pytorch-8b7145242df1
         self.seq = nn.Sequential(
             Normalize([0.5074, 0.4867, 0.4411], [0.2011, 0.1987, 0.2025]),
-            # первый способ уменьшения размерности картинки - через stride
-            nn.Conv2d(3, hidden_size, 5, stride=2, padding=2),
+            nn.Conv2d(3, hidden_size, kernel_size=5, stride=4, padding=2),
             nn.ReLU(),
-            # второй способ уменьшения размерности картинки - через слой пуллинг
-            nn.Conv2d(hidden_size, hidden_size * 2, 3, stride=2, padding=1),
+            nn.Conv2d(hidden_size, hidden_size * 2, kernel_size=3, stride=4, padding=1),
             nn.ReLU(),
-            nn.AvgPool2d(4),  # nn.MaxPool2d(4),
             nn.Flatten(),
             nn.Linear(hidden_size * 8, classes),
         )
@@ -457,9 +461,92 @@ class Cifar100_CNN(nn.Module):
 
 
 model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
+dataloader = train_classifier(model, epochs=75)
+compare_classification_reports(dataloader)
 print(model)
+
+
+# %% [markdown]
+"""
+Добавим слой макс пуллинга.
+
+Stride установим 2.
+"""
+
+
+# %%
+class Cifar100_CNN(nn.Module):
+    def __init__(self, hidden_size=HIDDEN_SIZE, classes=100):
+        super(Cifar100_CNN, self).__init__()
+        self.seq = nn.Sequential(
+            Normalize([0.5074, 0.4867, 0.4411], [0.2011, 0.1987, 0.2025]),
+            nn.Conv2d(3, hidden_size, kernel_size=5, stride=2, padding=2),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=5, stride=2, padding=2),
+            nn.Conv2d(hidden_size, hidden_size * 2, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+            nn.Flatten(),
+            nn.Linear(hidden_size * 8, classes),
+        )
+
+    def forward(self, input):
+        return self.seq(input)
+
+
+model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
 dataloader = train_classifier(model, epochs=160)
 compare_classification_reports(dataloader)
+print(model)
+
+# %%
+model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
+dataloader = train_classifier(model, epochs=30)
+compare_classification_reports(dataloader)
+
+# %% [markdown]
+"""
+Поменяем слой макс пуллинга на усредняющий пуллинг
+"""
+
+
+# %%
+class Cifar100_CNN(nn.Module):
+    def __init__(self, hidden_size=HIDDEN_SIZE, classes=100):
+        super(Cifar100_CNN, self).__init__()
+        self.seq = nn.Sequential(
+            Normalize([0.5074, 0.4867, 0.4411], [0.2011, 0.1987, 0.2025]),
+            nn.Conv2d(3, hidden_size, kernel_size=5, stride=2, padding=2),
+            nn.ReLU(),
+            nn.AvgPool2d(kernel_size=5, stride=2, padding=2),
+            nn.Conv2d(hidden_size, hidden_size * 2, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(),
+            nn.AvgPool2d(kernel_size=3, stride=2, padding=1),
+            nn.Flatten(),
+            nn.Linear(hidden_size * 8, classes),
+        )
+
+    def forward(self, input):
+        return self.seq(input)
+
+
+model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
+dataloader = train_classifier(model, epochs=100)
+compare_classification_reports(dataloader)
+print(model)
+
+# %%
+model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
+dataloader = train_classifier(model, epochs=120)
+compare_classification_reports(dataloader)
+
+# %%
+model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
+dataloader = train_classifier(model, epochs=140)
+compare_classification_reports(dataloader)
+
+# %%
+# -----
 
 # %%
 model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
