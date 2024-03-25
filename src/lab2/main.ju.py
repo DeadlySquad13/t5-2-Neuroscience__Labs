@@ -413,11 +413,11 @@ compare_classification_reports(dataloader)
 """
 
 # %% [markdown]
-# Уменьшим количество эпох.
+# Подберём количество эпох.
 
 # %%
 model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
-dataloader = train_classifier(model, epochs=500)
+dataloader = train_classifier(model, epochs=100)
 compare_classification_reports(dataloader)
 
 # %%
@@ -545,44 +545,68 @@ model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
 dataloader = train_classifier(model, epochs=140)
 compare_classification_reports(dataloader)
 
-# %%
-# -----
+# %% [markdown]
+"""
+### Поменяем количество свёрточных слоёв
+В качестве базовой выберем конфигурацию модели с макс пуллингом, так как она проявила себя лучше всего.
 
-# %%
-model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
-print(model)
-dataloader = train_classifier(model, batch_size=256, epochs=80)
-compare_classification_reports(dataloader)
-
-# %%
-model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
-print(model)
-dataloader = train_classifier(model, batch_size=64, epochs=320)
-compare_classification_reports(dataloader)
-
-# %%
-model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
-print(model)
-dataloader = train_classifier(model, batch_size=64, epochs=110)
-compare_classification_reports(dataloader)
+Поэкспериментируем над количеством свёрточных слоёв (параметр hidden_size в конструкторе).
+"""
 
 
 # %%
-class Cifar100_CNN_3(nn.Module):
+class Cifar100_CNN(nn.Module):
     def __init__(self, hidden_size=HIDDEN_SIZE, classes=100):
         super(Cifar100_CNN, self).__init__()
-        # https://blog.jovian.ai/image-classification-of-cifar100-dataset-using-pytorch-8b7145242df1
         self.seq = nn.Sequential(
             Normalize([0.5074, 0.4867, 0.4411], [0.2011, 0.1987, 0.2025]),
-            # первый способ уменьшения размерности картинки - через stride
-            nn.Conv2d(3, hidden_size, 5, stride=2, padding=2),
+            nn.Conv2d(3, hidden_size, kernel_size=5, stride=2, padding=2),
             nn.ReLU(),
-            # второй способ уменьшения размерности картинки - через слой пуллинг
-            nn.Conv2d(hidden_size, hidden_size * 2, 3, stride=2, padding=1),
+            nn.MaxPool2d(kernel_size=5, stride=3, padding=2),
+            nn.Conv2d(hidden_size, hidden_size, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.Conv2d(hidden_size * 2, hidden_size * 3, 3, stride=2, padding=1),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+            nn.Conv2d(hidden_size, hidden_size*2, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.AvgPool2d(4),  # nn.MaxPool2d(4),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+            nn.Flatten(),
+            nn.Linear(hidden_size * 8, classes),
+        )
+
+    def forward(self, input):
+        return self.seq(input)
+
+
+model = Cifar100_CNN(hidden_size=2*HIDDEN_SIZE, classes=len(CLASSES))
+dataloader = train_classifier(model, epochs=40)
+compare_classification_reports(dataloader)
+print(model)
+
+# %%
+model = Cifar100_CNN(hidden_size=2*HIDDEN_SIZE, classes=len(CLASSES))
+dataloader = train_classifier(model, epochs=25)
+compare_classification_reports(dataloader)
+
+
+# %% [markdown]
+"""
+### Поменяем ядро свёртки
+Поменяем с 5 до 7 на первом свёрточном слое.
+"""
+
+
+# %%
+class Cifar100_CNN(nn.Module):
+    def __init__(self, hidden_size=HIDDEN_SIZE, classes=100):
+        super(Cifar100_CNN, self).__init__()
+        self.seq = nn.Sequential(
+            Normalize([0.5074, 0.4867, 0.4411], [0.2011, 0.1987, 0.2025]),
+            nn.Conv2d(3, hidden_size, kernel_size=7, stride=3, padding=2),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=7, stride=2, padding=3),
+            nn.Conv2d(hidden_size, hidden_size * 2, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
             nn.Flatten(),
             nn.Linear(hidden_size * 8, classes),
         )
@@ -592,9 +616,44 @@ class Cifar100_CNN_3(nn.Module):
 
 
 model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
-print(model)
-dataloader = train_classifier(model, epochs=160)
+dataloader = train_classifier(model, epochs=30)
 compare_classification_reports(dataloader)
+print(model)
+
+# %% [markdown]
+"""
+### Поменяем шаг свёртки
+Поменяем stride с 3 до 2
+"""
+
+
+# %%
+class Cifar100_CNN(nn.Module):
+    def __init__(self, hidden_size=HIDDEN_SIZE, classes=100):
+        super(Cifar100_CNN, self).__init__()
+        self.seq = nn.Sequential(
+            Normalize([0.5074, 0.4867, 0.4411], [0.2011, 0.1987, 0.2025]),
+            nn.Conv2d(3, hidden_size, kernel_size=5, stride=2, padding=2),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=5, stride=2, padding=1),
+            nn.Conv2d(hidden_size, hidden_size * 2, kernel_size=3, stride=2, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
+            nn.Flatten(),
+            nn.Linear(hidden_size * 8, classes),
+        )
+
+    def forward(self, input):
+        return self.seq(input)
+
+
+model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
+dataloader = train_classifier(model, epochs=30)
+compare_classification_reports(dataloader)
+print(model)
+
+# %% [markdown]
+# ## Экспорт модели
 
 # %%
 model_path = Path("models")
@@ -612,30 +671,6 @@ new_model_2.eval()
 # %%
 # входной тензор для модели
 onnx_model_filename = "cifar100_cnn.onnx"
-x = torch.randn(1, 32, 32, 3, requires_grad=True).to(device)
-torch_out = model(x)
-
-# экспорт модели
-torch.onnx.export(
-    model,  # модель
-    x,  # входной тензор (или кортеж нескольких тензоров)
-    model_path/onnx_model_filename,  # куда сохранить (либо путь к файлу либо fileObject)
-    export_params=True,  # сохраняет веса обученных параметров внутри файла модели
-    opset_version=9,  # версия ONNX
-    do_constant_folding=True,  # следует ли выполнять укорачивание констант для оптимизации
-    input_names=["input"],  # имя входного слоя
-    output_names=["output"],  # имя выходного слоя
-    dynamic_axes={
-        "input": {
-            0: "batch_size"
-        },  # динамичные оси, в данном случае только размер пакета
-        "output": {0: "batch_size"},
-    },
-)
-
-# %%
-# входной тензор для модели
-onnx_model_filename = "cifar100_fc.onnx"
 x = torch.randn(1, 32, 32, 3, requires_grad=True).to(device)
 torch_out = model(x)
 
