@@ -746,10 +746,28 @@ model = Cifar100_MLP_2(classes=len(CLASSES))
 dataloader = train_classifier(model, learning_rate=0.0025, epochs=233, batch_size=256)
 compare_classification_reports(dataloader)
 
+# %% [markdown]
+# ## Экспорт модели
+
+# %%
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# %%
+model_path = Path("models")
+model_filename = "cifar_fc.pt"
+
+model_path.mkdir(exist_ok=True)
+
+model_file_path = model_path / model_filename
+
+torch.save(model, model_file_path)
+# загрузка
+new_model_2 = torch.load(model_file_path)
+new_model_2.eval()
 
 # %%
 # входной тензор для модели
-onnx_model_filename = "cifar100_cnn.onnx"
+onnx_model_filename = "cifar100_fc.onnx"
 x = torch.randn(1, 32, 32, 3, requires_grad=True).to(device)
 torch_out = model(x)
 
