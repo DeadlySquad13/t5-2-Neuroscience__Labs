@@ -5,3 +5,4 @@ numpy==1.26.4
 torchvision==0.17.2
 tensorboard==2.16.2
 tensorboard-data-server==0.7.2
+torch_receptive_field @ git+https://github.com/Fangyh09/pytorch-receptive-field.git@b49e301879a5c1021f9d5dc6e6349fb89d836173
