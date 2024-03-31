@@ -155,6 +155,60 @@ for class_id in CLASSES:
     plt.show()
 
 # %% [markdown]
+# ### Создание Cifar Dataset с аугментацией
+
+# %%
+from torch import Tensor  # noqa
+from torch.utils.data import Dataset  # noqa
+
+
+# New:
+class CifarDataset(Dataset):
+    def __init__(self, X: Tensor, y: Tensor, transform=None, p=0.0):
+        assert X.size(0) == y.size(0)
+        super(Dataset, self).__init__()
+        self.X = X
+        self.y = y
+        self.transform = transform
+        self.prob = p
+
+    def __len__(self):
+        return self.y.size(0)
+
+    def __getitem__(self, index):
+        X = self.X[index]
+        if self.transform and np.random.random() < self.prob:
+            X = self.transform(X.permute(2, 0, 1) / 255).permute(1, 2, 0) * 255
+
+        y = self.y[index]
+
+        return X, y
+
+
+# %% [markdown]
+"""
+Попробуем применить аугментацию к одной из картинок.
+"""
+
+# %%
+import torchvision.transforms as T  # noqa
+
+transform = T.Compose(
+    [
+        T.ColorJitter(brightness=0.1, contrast=0.1, saturation=0.2, hue=0.0),
+        # shear - сдвиг.
+        T.RandomAffine(degrees=15, translate=(0.1, 0.1), scale=(0.8, 1.2), shear=15),
+    ]
+)
+
+Image.fromarray(
+    (CifarDataset(Tensor(train_X), Tensor(train_y), transform=transform, p=1)[10])[0]
+    .numpy()
+    .astype(np.uint8)
+).resize((256, 256))
+
+
+# %% [markdown]
 # ### Создание Pytorch DataLoader'a
 
 
@@ -166,9 +220,18 @@ def create_dataloader(batch_size=128):
         tensor_y = (
             F.one_hot(torch.Tensor(y).to(torch.int64), num_classes=len(CLASSES)) / 1.0
         )
-        dataset = TensorDataset(tensor_x, tensor_y)  # создание объекта датасета
+        # New: Using CifarDataset.
+        dataset = CifarDataset(
+            tensor_x, tensor_y, transform=transform if part == "train" else None, p=0.5
+        )  # создание объекта датасета
         dataloader[part] = DataLoader(
-            dataset, batch_size=batch_size, shuffle=True
+            dataset,
+            batch_size=batch_size,
+            shuffle=True,
+            # New: prefetch_factor, num_workers and persistent_workers params.
+            # prefetch_factor=8 if part == "train" else 2,
+            # num_workers=2,
+            # persistent_workers=True,
         )  # создание экземпляра класса DataLoader
 
     return dataloader
@@ -481,46 +544,21 @@ def compare_classification_reports(dataloader: dict[str, DataLoader]):
         part != "test" and print("-" * 53)
 
 
-# %% [markdown]
-"""
-Добавим слой макс пуллинга.
-
-Stride установим 2.
-"""
-
-
 # %%
-class Cifar100_CNN(nn.Module):
-    def __init__(self, hidden_size=HIDDEN_SIZE, classes=100):
-        super(Cifar100_CNN, self).__init__()
-        self.seq = nn.Sequential(
-            Normalize([0.5074, 0.4867, 0.4411], [0.2011, 0.1987, 0.2025]),
-            nn.Conv2d(3, hidden_size, kernel_size=5, stride=2, padding=2),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=5, stride=2, padding=2),
-            nn.Conv2d(hidden_size, hidden_size * 2, kernel_size=3, stride=2, padding=1),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=3, stride=2, padding=1),
-            nn.Flatten(),
-            nn.Linear(hidden_size * 8, classes),
-        )
-
-    def forward(self, input):
-        return self.seq(input)
-
-
-model = Cifar100_CNN(hidden_size=HIDDEN_SIZE, classes=len(CLASSES))
-dataloader = train_classifier(model, epochs=160)
 compare_classification_reports(dataloader)
-print(model)
 
 # %% [markdown]
 """
 ### Анализ результатов обучения модели
-Как видно, лучше всего был предсказан класс с идентификатором 17, представляющий
-собой замки. Вероятнее всего это связано с количеством общих уникальных черт объектов
-на картинках: у замков их намного меньше по сравнению с, например, ребёнком,
-который может быть разного возраста, расы и может быть одет по-разному.
+В предыдущей модели (с MaxPulling) была довольно высокая точность и скорость обучения,
+однако модель была склонна к переобучению.
+
+Регуляризация с помощью аугментации изображений, dropout, label smoothing
+и weight decay дали свои плоды: переобучение ушло, при этом точность модели
+улучшилась на 2% по сравнению с лучшей версией модели
+второй лабораторной работы.
+
+К сожалению, взамен длительность обучения возросла в 5 раз.
 """
 
 # %% [markdown]
@@ -543,7 +581,7 @@ compare_classification_reports(dataloader)
 
 # %%
 model_path = Path("models")
-model_filename = "cifar_cnn.pt"
+model_filename = "cifar100_cnn_augmented.pt"
 
 model_path.mkdir(exist_ok=True)
 
@@ -556,7 +594,7 @@ new_model_2.eval()
 
 # %%
 # входной тензор для модели
-onnx_model_filename = "cifar100_cnn.onnx"
+onnx_model_filename = "cifar100_cnn_augmented.onnx"
 x = torch.randn(1, 32, 32, 3, requires_grad=True).to(device)
 torch_out = model(x)
 
