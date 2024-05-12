@@ -4,7 +4,18 @@ __pycache__/
 *$py.class
 
 # Datasets
-src/*/data
+src/*/data/external/*
+src/*/data/interim/*
+src/*/data/processed/*
+src/*/data/raw/*
+# - Leave only descriptions.
+!src/*/data/external/*.md
+!src/*/data/interim/*.md
+!src/*/data/processed/*.md
+!src/*/data/raw/*.md
+# - Leaved proccesed in VCS because I'm lazy to host files. It's small files
+# for education purposes anyway.
+!src/lab5/data/processed
 
 # C extensions
 *.so
@@ -39,6 +50,10 @@ MANIFEST
 # Installer logs
 pip-log.txt
 pip-delete-this-directory.txt
+
+# - Tensorboard logs.
+src/*/runs
+src/*/*.pth
 
 # Unit test / coverage reports
 htmlcov/
