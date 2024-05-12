@@ -24,7 +24,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from IPython.display import clear_output
-from numpy.typing import ArrayLike
+from numpy.typing import ArrayLike, NDArray
 from PIL import Image
 from sklearn.metrics import classification_report
 from torch.utils.data import DataLoader, TensorDataset
@@ -39,9 +39,12 @@ device
 
 # %% [markdown]
 """
-## Классификация изображений CIFAR100 с использованием переноса обучения с ResNet
+## Часть 1. Построение автоэнкодера на основе изображений CIFAR100
 ### Загрузка и распаковка набора данных CIFAR100
 """
+
+# %% [markdown]
+# Подготовка модулей и переменных для работы с файлами.
 
 # %%
 import os  # noqa
@@ -49,34 +52,55 @@ import shutil  # noqa
 import urllib  # noqa
 from pathlib import Path  # noqa
 
-url = "https://www.cs.toronto.edu/~kriz/cifar-100-python.tar.gz"
-filename = "cifar-100-python.tar.gz"
-model_path = Path("data")
+data_path = Path("data")
+external_data_path = data_path / "external"
+interim_data_path = data_path / "interim"
+processed_data_path = data_path / "processed"
 
-model_path.mkdir(exist_ok=True)
+external_data_path.mkdir(exist_ok=True)
+interim_data_path.mkdir(exist_ok=True)
+processed_data_path.mkdir(exist_ok=True)
 
-file_path = model_path / filename
+# %% [markdown]
+# Подготовка модулей и переменных для загрузки CIFAR100.
 
 # %%
+url = "https://www.cs.toronto.edu/~kriz/cifar-100-python.tar.gz"
+filename = "cifar-100-python.tar.gz"
+
+external_data_path.mkdir(exist_ok=True)
+
+file_path = external_data_path / filename
+
+# %% [markdown]
+# Загрузка CIFAR100.
+
+# %%
+# After extracting a new dir will be created so no need to create it manually.
 if not os.path.isfile(file_path):
     urllib.request.urlretrieve(url, file_path)
-    shutil.unpack_archive(file_path, extract_dir=model_path)
+    shutil.unpack_archive(file_path, extract_dir=external_data_path)
     file_path.unlink()  # Remove archive after extracting it.
 
 
 # %% [markdown]
 # ### Чтение тренировочной и тестовой выборки
 
-
 # %%
 def stem_extensions(filename: Path):
+    """
+    Stem extensions from file (including multi-part extensions like ".tar.gz").
+
+    returns: filename without extensions and trimmed string with extensions (without leading dot).
+    """
     extensions = "".join(filename.suffixes)
 
-    return str(filename).removesuffix(extensions)
+    return str(filename).removesuffix(extensions), extensions[1:]
 
 
 # %%
-dataset_path = Path(stem_extensions(file_path))
+dataset_path, _ = stem_extensions(file_path)
+dataset_path = Path(dataset_path)
 
 with open(dataset_path / "train", "rb") as f:
     data_train = pickle.load(f, encoding="latin1")
@@ -236,7 +260,7 @@ def create_dataloader(batch_size=128):
 
 
 # %%
-HIDDEN_SIZE = 64
+HIDDEN_SIZE = 512
 
 
 class Normalize(nn.Module):
@@ -282,7 +306,7 @@ class Cifar100_AE(nn.Module):
         return out, encoded, normed
 
 
-model = Cifar100_AE(hidden_size=512)
+model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
 model.to(device)
 summary(model, input_size=(32, 32, 3))
 model
@@ -425,8 +449,8 @@ def train(
         clear_output(wait=False)
         print(
             "Эпоха: %s\n"
-            "Лучшая доля правильных ответов: %s\n"
-            "Текущая доля правильных ответов: %s" % (epoch + 1, best_acc, acc)
+            "Лучшее значение метрики: %s\n"
+            "Текущее значение метрики: %s" % (epoch + 1, best_acc, acc)
         )
         passed += pbar.format_dict["elapsed"]
         pbar = tqdm(total=EPOCHS * steps_per_epoch, miniters=5)
@@ -437,7 +461,7 @@ def train(
         stats_val = np.array(losses_val)
         ax[1].set_ylim(stats_val[:, 0, 1].min() - 5, 100)
         ax[1].grid(axis="y")
-        for i, title in enumerate(["CCE", "Accuracy"]):
+        for i, title in enumerate(["MSE", "Accuracy"]):
             ax[i].plot(x_vals, stats[:, 0, i], label="train")
             ax[i].fill_between(x_vals, stats[:, 1, i], stats[:, 2, i], alpha=0.4)
             ax[i].plot(x_vals, stats_val[:, 0, i], label="val")
@@ -463,10 +487,15 @@ def train(
 
 
 # %%
-def train_classifier(
+BATCH_SIZE = 128
+LEARNING_RATE = 1e-3
+# New weight_decay ruins metrics a lot.
+WEIGHT_DECAY = 0
+
+def train_autoencoder(
     model: nn.Module,
-    learning_rate=1e-3,
-    batch_size=128,
+    learning_rate=LEARNING_RATE,
+    batch_size=BATCH_SIZE,
     epochs=EPOCHS,
     # Регуляризация модели за счёт коэффициента, учитывающего сложность модели.
     # Норма параметров будет прибавлена к функции потерь. Чем больше
@@ -501,54 +530,377 @@ def train_classifier(
     )
 
 
-# New weight_decay ruins metrics a lot.
-dataloader = train_classifier(model, weight_decay=0)
+dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY)
 
 # %% [markdown]
 # ### Проверка качества модели по классам на обучающей и тестовой выборках
 
-
 # %%
-def report_classification_results(dataloader: DataLoader):
-    y_pred = []
-    y_true = []
-    with torch.no_grad():  # отключение автоматического дифференцирования
-        for _, data in enumerate(dataloader, 0):
-            inputs, labels = data
+def get_encoder_results(model: Cifar100_AE, dataloader: DataLoader):
+    embeddings = []
+    images = []
+    reconstructs = []
+    model.eval()
+    with torch.no_grad():
+        for i, batch in enumerate(dataloader['test'], 0):
+            # получение одного минибатча; batch это двуэлементный список из [inputs, labels]
+            inputs, labels = batch
             # на GPU
-            # inputs, labels = inputs.to(device), labels.to(device)
+            inputs, labels = inputs.to(device), labels.to(device)
 
-            outputs = model(inputs).detach().cpu().numpy()
-            y_pred.append(outputs)
-            y_true.append(labels.numpy())
-        y_true = np.concatenate(y_true)
-        y_pred = np.concatenate(y_pred)
-        print(
-            classification_report(
-                y_true.argmax(axis=-1),
-                y_pred.argmax(axis=-1),
-                digits=4,
-                target_names=list(map(str, CLASSES)),
-            )
-        )
+            # очищение прошлых градиентов с прошлой итерации
+            # optimizer.zero_grad()
 
+            # прямой + обратный проходы + оптимизация
+            out, embedding, norm = model(inputs)
+            embeddings.append(embedding.detach().cpu().numpy())
+            images.append(inputs.detach().cpu().numpy())
+            reconstructs.append(out.detach().cpu().numpy())
+    embeddings = np.concatenate(embeddings, axis=0)
+    images = np.concatenate(images, axis=0)
+    reconstructs = np.concatenate(reconstructs, axis=0)
+    reconstructs = (reconstructs-reconstructs.min())/(reconstructs.max()-reconstructs.min())
 
-# %%
-def compare_classification_reports(dataloader: dict[str, DataLoader]):
-    for part in ["train", "test"]:
-        print(part)
-        report_classification_results(dataloader[part])
-        part != "test" and print("-" * 53)
-
+    return {
+        "embeddings": embeddings,
+        "images": images,
+        "reconstructs": reconstructs,
+    }
 
 # %%
-compare_classification_reports(dataloader)
+results = get_encoder_results(model, dataloader)
+
+# %% [markdown]
+# #### Визуализация эмбеддингов
+
+# %%
+# Тут мы применяем уменьшение размерности к многомерному
+# эмбеддингу, полученному из бутылочного горлышка автоэнкодера.
+# Можете попробовать сделать число нейронов равное 2
+# и тогда данный этап можно пропустить и написать просто:
+# projection = embeddings
+
+from sklearn.decomposition import PCA
+from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+
+def visualize_images_embeddings(images: NDArray, embeddings: NDArray):
+    projections = PCA(n_components=2).fit_transform(embeddings)
+
+    def implot(x, y, image, ax, zoom=1):
+        im = OffsetImage(image, zoom=zoom)
+        ab = AnnotationBbox(im, (x, y), xycoords='data', frameon=False)
+        ax.add_artist(ab)
+        ax.update_datalim(np.column_stack([x, y]))
+        ax.autoscale()
+
+    fig, ax = plt.subplots(1, 1, figsize=(15, 15))
+    for img, x in zip(images, projections):
+        img = img.reshape(32, 32, 3)/255.
+        implot(x[0], x[1], img, ax=ax, zoom=0.5)
+
+
+# %% [markdown]
+# #### Визуализация восстановленной картинки
+
+# %%
+from ipywidgets import interact
+
+def report_encoder_results(images: NDArray, reconstructs: NDArray, embeddings: NDArray):
+    def draw_comparision(index: int):
+       fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+       ax[0].imshow(images[index].reshape(32,32,3)/255.)
+       ax[1].imshow(reconstructs[index].reshape(32,32,3))
+       ax[0].set_title('Оригинал')
+       ax[1].set_title('Восстановленное изображение')
+
+    interact(draw_comparision, index=(0, len(images) - 1))
+
+    visualize_images_embeddings(images, embeddings)
+
+# %% [markdown]
+# Как видно, получившиеся embedding'и образуют некоторые кластеры. 
+
+# %%
+report_encoder_results(**results)
+
+# %% [markdown]
+# ### Подберём гиперпараметры
+# #### batch size и epochs
+# Меняем их параллельно (одно уменьшили в два раза, следовательно другое
+# увеличили в два раза)
+
+# %%
+model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
+model.to(device)
+dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY)
+results = get_encoder_results(model, dataloader)
+report_encoder_results(**results)
+
+# %%
+model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
+model.to(device)
+dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, batch_size=int(BATCH_SIZE / 2), epochs=EPOCHS * 2)
+results = get_encoder_results(model, dataloader)
+report_encoder_results(**results)
+
+# %%
+model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
+model.to(device)
+dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, batch_size=int(BATCH_SIZE / 4), epochs=EPOCHS * 4)
+results = get_encoder_results(model, dataloader)
+report_encoder_results(**results)
+
+# %%
+model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
+model.to(device)
+dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, batch_size=BATCH_SIZE * 4, epochs=int(EPOCHS / 4))
+results = get_encoder_results(model, dataloader)
+report_encoder_results(**results)
+
+# %%
+model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
+model.to(device)
+dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, batch_size=BATCH_SIZE * 2, epochs=int(EPOCHS / 2))
+results = get_encoder_results(model, dataloader)
+report_encoder_results(**results)
+
+# %% [markdown]
+# Как видно, при количестве эпох меньше 100 наблюдается недообучение. При
+# количестве эпох больше 200 - переобучение. Лучший результат ~83%.
+# Зафиксируем среднее - 200 эпох и соответствующий этому batch size:
+
+# %%
+OPTIMAL_EPOCHS = 200
+OPTIMAL_BATCH_SIZE = int(BATCH_SIZE * (OPTIMAL_EPOCHS / EPOCHS))
+OPTIMAL_BATCH_SIZE
+
+
+# %% [markdown]
+# #### learning rate
+# learning rate также стоит менять вместе с epochs либо batch_size
+# параллельно для сохранения количества итерация константным.
+# Будем при увеличении learning_rate в n раз уменьшать epochs в n раз.
+
+# %%
+model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
+model.to(device)
+dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=LEARNING_RATE, batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS)
+results = get_encoder_results(model, dataloader)
+report_encoder_results(**results)
+
+# %%
+model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
+model.to(device)
+dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=LEARNING_RATE * 2, batch_size=OPTIMAL_BATCH_SIZE, epochs=int(OPTIMAL_EPOCHS / 2))
+results = get_encoder_results(model, dataloader)
+report_encoder_results(**results)
+
+# %%
+model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
+model.to(device)
+dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=LEARNING_RATE * 4, batch_size=OPTIMAL_BATCH_SIZE, epochs=int(OPTIMAL_EPOCHS / 4))
+results = get_encoder_results(model, dataloader)
+report_encoder_results(**results)
+
+# %%
+model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
+model.to(device)
+dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=int(LEARNING_RATE / 4), batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS * 4)
+results = get_encoder_results(model, dataloader)
+report_encoder_results(**results)
+
+# %%
+model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
+model.to(device)
+dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=int(LEARNING_RATE / 2), batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS * 2)
+results = get_encoder_results(model, dataloader)
+report_encoder_results(**results)
+
+# %% [markdown]
+# В итоге изменение learning_rate не принесло плодов: начальный был оптимальным.
+
+# %%
+OPTIMAL_LEARNING_RATE = LEARNING_RATE
+
+# %% [markdown]
+# #### hidden size
+
+# %%
+model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
+model.to(device)
+dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=OPTIMAL_LEARNING_RATE, batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS)
+results = get_encoder_results(model, dataloader)
+report_encoder_results(**results)
+
+# %%
+model = Cifar100_AE(hidden_size=int(HIDDEN_SIZE * 2))
+model.to(device)
+dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=OPTIMAL_LEARNING_RATE, batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS)
+results = get_encoder_results(model, dataloader)
+report_encoder_results(**results)
+
+# %%
+model = Cifar100_AE(hidden_size=int(HIDDEN_SIZE * 4))
+model.to(device)
+dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=OPTIMAL_LEARNING_RATE, batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS)
+results = get_encoder_results(model, dataloader)
+report_encoder_results(**results)
+
+# %%
+model = Cifar100_AE(hidden_size=int(HIDDEN_SIZE * 4))
+model.to(device)
+dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY + 1e-5, learning_rate=OPTIMAL_LEARNING_RATE, batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS)
+results = get_encoder_results(model, dataloader)
+report_encoder_results(**results)
+
+# %%
+model = Cifar100_AE(hidden_size=int(HIDDEN_SIZE * 4))
+model.to(device)
+dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY + 2e-5, learning_rate=OPTIMAL_LEARNING_RATE, batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS)
+results = get_encoder_results(model, dataloader)
+report_encoder_results(**results)
+
+# %%
+model = Cifar100_AE(hidden_size=int(HIDDEN_SIZE / 2))
+model.to(device)
+dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=OPTIMAL_LEARNING_RATE, batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS)
+results = get_encoder_results(model, dataloader)
+report_encoder_results(**results)
+
+# %%
+model = Cifar100_AE(hidden_size=int(HIDDEN_SIZE / 4))
+model.to(device)
+dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=OPTIMAL_LEARNING_RATE, batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS)
+results = get_encoder_results(model, dataloader)
+report_encoder_results(**results)
+
+# %%
+model = Cifar100_AE(hidden_size=int(HIDDEN_SIZE / 8))
+model.to(device)
+dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=OPTIMAL_LEARNING_RATE, batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS)
+results = get_encoder_results(model, dataloader)
+report_encoder_results(**results)
+
+# %% [markdown]
+# Вполне закономерно, увеличение hidden_size ведёт к улучшение модели.
+# В итоге наилучшим HIDDEN_SIZE оказалось значение, увеличенное вдвое - 86,5%. При
+# дальнейшем увеличении параметра, начинается переобучение. Поставив
+# weight_decay = 1e-5, мы уменьшили переобучение. При weight_decay = 2e-5 мы
+# полностью устранили переобучение, достигнув 82%. Этот результат хуже
+# предыдущих вариантов, при этом модель обучается дольше в 1.5 раза.
+
 
 # %% [markdown]
 """
-### Анализ результатов обучения модели
-Как видно, результаты феноменальные. Мы достигли точности в 99,33%.
+### Анализ результатов обучения модели автоэнкодера
+Автоэнкодер позволяет построить эмбеддинги, по которым, например, можно в будущем реализовывать кластеризацию.
+
+По результатам наших экспериментов с гиперпараметрами видно, что автоэнкодер по сравнению с нейронными
+сетями из предыдущих лабораторных работ начинает переобучаться довольно поздно. Из-за этого, например, мы почти не пользовались
+weight_decay и совершенно отбросили scheduler.
 """
+
+# %% [markdown]
+# ## Часть 2. Очистка звука
+
+# %% [markdown]
+# Подготовка модулей и переменных для работы с аудио файлами.
+
+# %%
+import subprocess
+from pathlib import Path
+
+external_audio_data_path = external_data_path / "audio"
+external_audio_data_path.mkdir(exist_ok=True)
+
+# %% [markdown]
+# Подготовка модулей и переменных для работы с музыкой, с которой мы собираемся
+# экспериментировать.
+
+# %%
+# Поменять на музыку, с которой хотите эксперементировать.
+filename = "Arcanum.mp3"
+audio_path = external_audio_data_path / filename
+
+start_time = "00:00:00"
+finish_time = "00:00:15"
+
+str(audio_path), str(stem_extensions(audio_path))
+
+# %% [markdown]
+# ### Подготовка файла музыки
+# Создадим функцию, которая с помощью ffmpeg поможет нам обрезать звуковой
+# файл.
+
+# %%
+def cut_audio(audio_path: Path, start_time: str = "00:00:00", finish_time: str = "00:00:15") -> Path:
+    """
+    returns (Path): file path of the resulting file
+    """
+    if not audio_path.exists():
+        raise Exception(f"No file {audio_path} exists!")
+
+    audio_filename_without_extensions, trimmed_extensions = stem_extensions(audio_path)
+    output_file_path = f"{audio_filename_without_extensions}--cut.{trimmed_extensions}"
+
+    subprocess.run([
+        "ffmpeg",
+        "-y", # Allow overwriting file if it exists.
+        "-ss",
+        start_time,
+        "-to", finish_time,
+        "-i", str(audio_path),
+        "-c", "copy",
+        output_file_path,
+    ])
+
+    return Path(output_file_path)
+
+# %% [markdown]
+# Возьмём первые 15 секунд, всё остальное обрежем.
+
+# %%
+try:
+    cut_audio_file_path = cut_audio(audio_path=audio_path, start_time=start_time, finish_time=finish_time)
+except Exception as error:
+    print(f"Caught this error while trying to cut_audio: {repr(error)}")
+
+# %% [markdown]
+# Создадим функцию, которая с помощью ffmpeg конвертирует файл в формат,
+# совместимый с автоэнкодером.
+
+# %%
+def convert_audio_for_autoencoder(audio_path: Path) -> Path:
+    """
+    returns (Path): file path of the resulting file
+    """
+    if not audio_path.exists():
+        raise Exception(f"No file {audio_path} exists!")
+
+    audio_filename_without_extensions, _ = stem_extensions(audio_path)
+    output_file_path = f"{audio_filename_without_extensions}.wav"
+
+    subprocess.run([
+        "ffmpeg",
+        "-y", # Allow overwriting file if it exists.
+        "-i", str(audio_path),
+        "-ac", "1", # Audio channels.
+        "-ar", "16000", # Audio frame*r*ate.
+        output_file_path
+    ])
+
+    return Path(output_file_path)
+
+# %% [markdown]
+# Конвертируем в wav файл с одним каналом и частотой дискретизации 16кГц
+
+# %%
+try:
+    audio_for_autoencoder_path = convert_audio_for_autoencoder(cut_audio_file_path)
+except Exception as error:
+    print(f"Caught this error while trying to cut_audio: {repr(error)}")
+
+
 
 # %% [markdown]
 """
@@ -560,7 +912,7 @@ model = freeze(keep_last=66)  # More than total.
 summary(model, input_size=(32, 32, 3))
 
 # %%
-dataloader = train_classifier(model)
+dataloader = train_autoencoder(model)
 compare_classification_reports(dataloader)
 
 # %% [markdown]
@@ -573,7 +925,7 @@ model = freeze(keep_last=10)  # More than total.
 summary(model, input_size=(32, 32, 3))
 
 # %%
-dataloader = train_classifier(model)
+dataloader = train_autoencoder(model)
 compare_classification_reports(dataloader)
 
 
@@ -581,12 +933,12 @@ compare_classification_reports(dataloader)
 # ## Экспорт модели
 
 # %%
-model_path = Path("models")
+models_path = Path("models")
 model_filename = "cifar100_resnet.pt"
 
-model_path.mkdir(exist_ok=True)
+models_path.mkdir(exist_ok=True)
 
-model_file_path = model_path / model_filename
+model_file_path = models_path / model_filename
 
 torch.save(model, model_file_path)
 # загрузка
@@ -603,7 +955,7 @@ torch_out = model(x)
 torch.onnx.export(
     model,  # модель
     x,  # входной тензор (или кортеж нескольких тензоров)
-    model_path
+    models_path
     / onnx_model_filename,  # куда сохранить (либо путь к файлу либо fileObject)
     export_params=True,  # сохраняет веса обученных параметров внутри файла модели
     opset_version=9,  # версия ONNX
