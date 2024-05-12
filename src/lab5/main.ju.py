@@ -66,11 +66,11 @@ processed_data_path.mkdir(exist_ok=True)
 
 # %%
 url = "https://www.cs.toronto.edu/~kriz/cifar-100-python.tar.gz"
-filename = "cifar-100-python.tar.gz"
+audio_filename = "cifar-100-python.tar.gz"
 
 external_data_path.mkdir(exist_ok=True)
 
-file_path = external_data_path / filename
+file_path = external_data_path / audio_filename
 
 # %% [markdown]
 # Загрузка CIFAR100.
@@ -908,19 +908,32 @@ from pathlib import Path
 external_audio_data_path = external_data_path / "audio"
 external_audio_data_path.mkdir(exist_ok=True)
 
+external_noise_data_path = external_data_path / "noises"
+external_noise_data_path.mkdir(exist_ok=True)
+
 # %% [markdown]
 # Подготовка модулей и переменных для работы с музыкой, с которой мы собираемся
 # экспериментировать.
 
 # %%
-# Поменять на музыку, с которой хотите эксперементировать.
-filename = "Arcanum.mp3"
-audio_path = external_audio_data_path / filename
+# Поменять на музыку, с которой хотите экспериментировать.
+audio_name = "Arcanum"
+audio_filename = f"{audio_name}.mp3"
+audio_path = external_audio_data_path / audio_filename
 
 start_time = "00:00:00"
 finish_time = "00:00:15"
 
 str(audio_path), str(stem_extensions(audio_path))
+
+# %% [markdown]
+# Аналогично с файлом шума.
+
+# %%
+# Поменять на файл с шумом, с которым хотите экспериментировать.
+noise_name = "bee"
+noise_filename = f"{noise_name}.mp3"
+noise_path = external_noise_data_path / noise_filename
 
 # %% [markdown]
 # ### Подготовка файла музыки
@@ -994,8 +1007,6 @@ def ffmpeg(
 
     output_file_path = output_file_path or (output_path / output_filename)
 
-    print(output_path)
-
     subprocess.run(
         [
             "ffmpeg",
@@ -1052,7 +1063,18 @@ try:
         audio_path=audio_path, start_time=start_time, finish_time=finish_time
     )
 except Exception as error:
-    print(f"Caught this error while trying to cut_audio: {repr(error)}")
+    print(f"Caught this error while trying to cut_audio for audio file: {repr(error)}")
+
+# %% [markdown]
+# Аналогично с шумом.
+
+# %%
+try:
+    cut_noise_file_path = cut_audio(
+        audio_path=noise_path, start_time=start_time, finish_time=finish_time
+    )
+except Exception as error:
+    print(f"Caught this error while trying to cut_audio for noise file: {repr(error)}")
 
 # %% [markdown]
 # Создадим функцию, которая с помощью ffmpeg конвертирует файл в формат,
@@ -1096,10 +1118,18 @@ def convert_audio_for_autoencoder(
 
 # %%
 try:
-    audio_for_autoencoder_path = convert_audio_for_autoencoder(audio_path=cut_audio_file_path, output_filename_without_extension="audio")
+    audio_for_autoencoder_path = convert_audio_for_autoencoder(audio_path=cut_audio_file_path, output_filename_without_extension=audio_name)
 except Exception as error:
-    print(f"Caught this error while trying to cut_audio: {repr(error)}")
+    print(f"Caught this error while trying to convert_audio_for_autoencoder for audio: {repr(error)}")
 
+# %% [markdown]
+# Аналогично для файла шума.
+
+# %%
+try:
+    noise_for_autoencoder_path = convert_audio_for_autoencoder(audio_path=cut_noise_file_path, output_filename_without_extension=noise_name)
+except Exception as error:
+    print(f"Caught this error while trying to convert_audio_for_autoencoder for noise: {repr(error)}")
 
 # %% [markdown]
 """

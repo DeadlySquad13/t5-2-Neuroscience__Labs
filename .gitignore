@@ -10,7 +10,7 @@ src/*/data/processed/*
 src/*/data/raw/*
 # - Leaved proccesed in VCS because I'm lazy to host files. It's small files
 # for education purposes anyway.
-!src/lab5/data/processed
+!src/lab5/data/processed/*
 
 # C extensions
 *.so
