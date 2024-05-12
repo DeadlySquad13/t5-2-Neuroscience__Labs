@@ -86,6 +86,7 @@ if not os.path.isfile(file_path):
 # %% [markdown]
 # ### Чтение тренировочной и тестовой выборки
 
+
 # %%
 def stem_extensions(filename: Path):
     """
@@ -275,7 +276,7 @@ class Normalize(nn.Module):
         x = x / self.std
         # NEW: instead of permute now flattenning. Othewise shape will be
         # different.
-        return torch.flatten(x, start_dim=1) # nhw -> nm
+        return torch.flatten(x, start_dim=1)  # nhw -> nm
 
 
 class Cifar100_AE(nn.Module):
@@ -492,6 +493,7 @@ LEARNING_RATE = 1e-3
 # New weight_decay ruins metrics a lot.
 WEIGHT_DECAY = 0
 
+
 def train_autoencoder(
     model: nn.Module,
     learning_rate=LEARNING_RATE,
@@ -535,6 +537,7 @@ dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY)
 # %% [markdown]
 # ### Проверка качества модели по классам на обучающей и тестовой выборках
 
+
 # %%
 def get_encoder_results(model: Cifar100_AE, dataloader: DataLoader):
     embeddings = []
@@ -542,7 +545,7 @@ def get_encoder_results(model: Cifar100_AE, dataloader: DataLoader):
     reconstructs = []
     model.eval()
     with torch.no_grad():
-        for i, batch in enumerate(dataloader['test'], 0):
+        for i, batch in enumerate(dataloader["test"], 0):
             # получение одного минибатча; batch это двуэлементный список из [inputs, labels]
             inputs, labels = batch
             # на GPU
@@ -559,13 +562,16 @@ def get_encoder_results(model: Cifar100_AE, dataloader: DataLoader):
     embeddings = np.concatenate(embeddings, axis=0)
     images = np.concatenate(images, axis=0)
     reconstructs = np.concatenate(reconstructs, axis=0)
-    reconstructs = (reconstructs-reconstructs.min())/(reconstructs.max()-reconstructs.min())
+    reconstructs = (reconstructs - reconstructs.min()) / (
+        reconstructs.max() - reconstructs.min()
+    )
 
     return {
         "embeddings": embeddings,
         "images": images,
         "reconstructs": reconstructs,
     }
+
 
 # %%
 results = get_encoder_results(model, dataloader)
@@ -580,22 +586,23 @@ results = get_encoder_results(model, dataloader)
 # и тогда данный этап можно пропустить и написать просто:
 # projection = embeddings
 
+from matplotlib.offsetbox import AnnotationBbox, OffsetImage
 from sklearn.decomposition import PCA
-from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+
 
 def visualize_images_embeddings(images: NDArray, embeddings: NDArray):
     projections = PCA(n_components=2).fit_transform(embeddings)
 
     def implot(x, y, image, ax, zoom=1):
         im = OffsetImage(image, zoom=zoom)
-        ab = AnnotationBbox(im, (x, y), xycoords='data', frameon=False)
+        ab = AnnotationBbox(im, (x, y), xycoords="data", frameon=False)
         ax.add_artist(ab)
         ax.update_datalim(np.column_stack([x, y]))
         ax.autoscale()
 
     fig, ax = plt.subplots(1, 1, figsize=(15, 15))
     for img, x in zip(images, projections):
-        img = img.reshape(32, 32, 3)/255.
+        img = img.reshape(32, 32, 3) / 255.0
         implot(x[0], x[1], img, ax=ax, zoom=0.5)
 
 
@@ -605,20 +612,22 @@ def visualize_images_embeddings(images: NDArray, embeddings: NDArray):
 # %%
 from ipywidgets import interact
 
+
 def report_encoder_results(images: NDArray, reconstructs: NDArray, embeddings: NDArray):
     def draw_comparision(index: int):
-       fig, ax = plt.subplots(1, 2, figsize=(10, 5))
-       ax[0].imshow(images[index].reshape(32,32,3)/255.)
-       ax[1].imshow(reconstructs[index].reshape(32,32,3))
-       ax[0].set_title('Оригинал')
-       ax[1].set_title('Восстановленное изображение')
+        fig, ax = plt.subplots(1, 2, figsize=(10, 5))
+        ax[0].imshow(images[index].reshape(32, 32, 3) / 255.0)
+        ax[1].imshow(reconstructs[index].reshape(32, 32, 3))
+        ax[0].set_title("Оригинал")
+        ax[1].set_title("Восстановленное изображение")
 
     interact(draw_comparision, index=(0, len(images) - 1))
 
     visualize_images_embeddings(images, embeddings)
 
+
 # %% [markdown]
-# Как видно, получившиеся embedding'и образуют некоторые кластеры. 
+# Как видно, получившиеся embedding'и образуют некоторые кластеры.
 
 # %%
 report_encoder_results(**results)
@@ -639,28 +648,36 @@ report_encoder_results(**results)
 # %%
 model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
 model.to(device)
-dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, batch_size=int(BATCH_SIZE / 2), epochs=EPOCHS * 2)
+dataloader = train_autoencoder(
+    model, weight_decay=WEIGHT_DECAY, batch_size=int(BATCH_SIZE / 2), epochs=EPOCHS * 2
+)
 results = get_encoder_results(model, dataloader)
 report_encoder_results(**results)
 
 # %%
 model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
 model.to(device)
-dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, batch_size=int(BATCH_SIZE / 4), epochs=EPOCHS * 4)
+dataloader = train_autoencoder(
+    model, weight_decay=WEIGHT_DECAY, batch_size=int(BATCH_SIZE / 4), epochs=EPOCHS * 4
+)
 results = get_encoder_results(model, dataloader)
 report_encoder_results(**results)
 
 # %%
 model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
 model.to(device)
-dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, batch_size=BATCH_SIZE * 4, epochs=int(EPOCHS / 4))
+dataloader = train_autoencoder(
+    model, weight_decay=WEIGHT_DECAY, batch_size=BATCH_SIZE * 4, epochs=int(EPOCHS / 4)
+)
 results = get_encoder_results(model, dataloader)
 report_encoder_results(**results)
 
 # %%
 model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
 model.to(device)
-dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, batch_size=BATCH_SIZE * 2, epochs=int(EPOCHS / 2))
+dataloader = train_autoencoder(
+    model, weight_decay=WEIGHT_DECAY, batch_size=BATCH_SIZE * 2, epochs=int(EPOCHS / 2)
+)
 results = get_encoder_results(model, dataloader)
 report_encoder_results(**results)
 
@@ -684,35 +701,65 @@ OPTIMAL_BATCH_SIZE
 # %%
 model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
 model.to(device)
-dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=LEARNING_RATE, batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS)
+dataloader = train_autoencoder(
+    model,
+    weight_decay=WEIGHT_DECAY,
+    learning_rate=LEARNING_RATE,
+    batch_size=OPTIMAL_BATCH_SIZE,
+    epochs=OPTIMAL_EPOCHS,
+)
 results = get_encoder_results(model, dataloader)
 report_encoder_results(**results)
 
 # %%
 model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
 model.to(device)
-dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=LEARNING_RATE * 2, batch_size=OPTIMAL_BATCH_SIZE, epochs=int(OPTIMAL_EPOCHS / 2))
+dataloader = train_autoencoder(
+    model,
+    weight_decay=WEIGHT_DECAY,
+    learning_rate=LEARNING_RATE * 2,
+    batch_size=OPTIMAL_BATCH_SIZE,
+    epochs=int(OPTIMAL_EPOCHS / 2),
+)
 results = get_encoder_results(model, dataloader)
 report_encoder_results(**results)
 
 # %%
 model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
 model.to(device)
-dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=LEARNING_RATE * 4, batch_size=OPTIMAL_BATCH_SIZE, epochs=int(OPTIMAL_EPOCHS / 4))
+dataloader = train_autoencoder(
+    model,
+    weight_decay=WEIGHT_DECAY,
+    learning_rate=LEARNING_RATE * 4,
+    batch_size=OPTIMAL_BATCH_SIZE,
+    epochs=int(OPTIMAL_EPOCHS / 4),
+)
 results = get_encoder_results(model, dataloader)
 report_encoder_results(**results)
 
 # %%
 model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
 model.to(device)
-dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=int(LEARNING_RATE / 4), batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS * 4)
+dataloader = train_autoencoder(
+    model,
+    weight_decay=WEIGHT_DECAY,
+    learning_rate=int(LEARNING_RATE / 4),
+    batch_size=OPTIMAL_BATCH_SIZE,
+    epochs=OPTIMAL_EPOCHS * 4,
+)
 results = get_encoder_results(model, dataloader)
 report_encoder_results(**results)
 
 # %%
 model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
 model.to(device)
-dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=int(LEARNING_RATE / 2), batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS * 2)
+dataloader = train_autoencoder(
+    model,
+    weight_decay=WEIGHT_DECAY,
+    learning_rate=int(LEARNING_RATE / 2),
+    batch_size=OPTIMAL_BATCH_SIZE,
+    epochs=OPTIMAL_EPOCHS * 2,
+)
 results = get_encoder_results(model, dataloader)
 report_encoder_results(**results)
 
@@ -728,56 +775,104 @@ OPTIMAL_LEARNING_RATE = LEARNING_RATE
 # %%
 model = Cifar100_AE(hidden_size=HIDDEN_SIZE)
 model.to(device)
-dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=OPTIMAL_LEARNING_RATE, batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS)
+dataloader = train_autoencoder(
+    model,
+    weight_decay=WEIGHT_DECAY,
+    learning_rate=OPTIMAL_LEARNING_RATE,
+    batch_size=OPTIMAL_BATCH_SIZE,
+    epochs=OPTIMAL_EPOCHS,
+)
 results = get_encoder_results(model, dataloader)
 report_encoder_results(**results)
 
 # %%
 model = Cifar100_AE(hidden_size=int(HIDDEN_SIZE * 2))
 model.to(device)
-dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=OPTIMAL_LEARNING_RATE, batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS)
+dataloader = train_autoencoder(
+    model,
+    weight_decay=WEIGHT_DECAY,
+    learning_rate=OPTIMAL_LEARNING_RATE,
+    batch_size=OPTIMAL_BATCH_SIZE,
+    epochs=OPTIMAL_EPOCHS,
+)
 results = get_encoder_results(model, dataloader)
 report_encoder_results(**results)
 
 # %%
 model = Cifar100_AE(hidden_size=int(HIDDEN_SIZE * 4))
 model.to(device)
-dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=OPTIMAL_LEARNING_RATE, batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS)
+dataloader = train_autoencoder(
+    model,
+    weight_decay=WEIGHT_DECAY,
+    learning_rate=OPTIMAL_LEARNING_RATE,
+    batch_size=OPTIMAL_BATCH_SIZE,
+    epochs=OPTIMAL_EPOCHS,
+)
 results = get_encoder_results(model, dataloader)
 report_encoder_results(**results)
 
 # %%
 model = Cifar100_AE(hidden_size=int(HIDDEN_SIZE * 4))
 model.to(device)
-dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY + 1e-5, learning_rate=OPTIMAL_LEARNING_RATE, batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS)
+dataloader = train_autoencoder(
+    model,
+    weight_decay=WEIGHT_DECAY + 1e-5,
+    learning_rate=OPTIMAL_LEARNING_RATE,
+    batch_size=OPTIMAL_BATCH_SIZE,
+    epochs=OPTIMAL_EPOCHS,
+)
 results = get_encoder_results(model, dataloader)
 report_encoder_results(**results)
 
 # %%
 model = Cifar100_AE(hidden_size=int(HIDDEN_SIZE * 4))
 model.to(device)
-dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY + 2e-5, learning_rate=OPTIMAL_LEARNING_RATE, batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS)
+dataloader = train_autoencoder(
+    model,
+    weight_decay=WEIGHT_DECAY + 2e-5,
+    learning_rate=OPTIMAL_LEARNING_RATE,
+    batch_size=OPTIMAL_BATCH_SIZE,
+    epochs=OPTIMAL_EPOCHS,
+)
 results = get_encoder_results(model, dataloader)
 report_encoder_results(**results)
 
 # %%
 model = Cifar100_AE(hidden_size=int(HIDDEN_SIZE / 2))
 model.to(device)
-dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=OPTIMAL_LEARNING_RATE, batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS)
+dataloader = train_autoencoder(
+    model,
+    weight_decay=WEIGHT_DECAY,
+    learning_rate=OPTIMAL_LEARNING_RATE,
+    batch_size=OPTIMAL_BATCH_SIZE,
+    epochs=OPTIMAL_EPOCHS,
+)
 results = get_encoder_results(model, dataloader)
 report_encoder_results(**results)
 
 # %%
 model = Cifar100_AE(hidden_size=int(HIDDEN_SIZE / 4))
 model.to(device)
-dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=OPTIMAL_LEARNING_RATE, batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS)
+dataloader = train_autoencoder(
+    model,
+    weight_decay=WEIGHT_DECAY,
+    learning_rate=OPTIMAL_LEARNING_RATE,
+    batch_size=OPTIMAL_BATCH_SIZE,
+    epochs=OPTIMAL_EPOCHS,
+)
 results = get_encoder_results(model, dataloader)
 report_encoder_results(**results)
 
 # %%
 model = Cifar100_AE(hidden_size=int(HIDDEN_SIZE / 8))
 model.to(device)
-dataloader = train_autoencoder(model, weight_decay=WEIGHT_DECAY, learning_rate=OPTIMAL_LEARNING_RATE, batch_size=OPTIMAL_BATCH_SIZE, epochs=OPTIMAL_EPOCHS)
+dataloader = train_autoencoder(
+    model,
+    weight_decay=WEIGHT_DECAY,
+    learning_rate=OPTIMAL_LEARNING_RATE,
+    batch_size=OPTIMAL_BATCH_SIZE,
+    epochs=OPTIMAL_EPOCHS,
+)
 results = get_encoder_results(model, dataloader)
 report_encoder_results(**results)
 
@@ -832,36 +927,130 @@ str(audio_path), str(stem_extensions(audio_path))
 # Создадим функцию, которая с помощью ffmpeg поможет нам обрезать звуковой
 # файл.
 
+
 # %%
-def cut_audio(audio_path: Path, start_time: str = "00:00:00", finish_time: str = "00:00:15") -> Path:
+def change_filename(file_path: Path, new_filename: str, preserve_extension=True):
+    """
+    Changes filename.
+    params:
+        preserve_extension: if True, only name will be changed: "test.mp3" -> "new.mp3".
+            Otherwise, extension will be changed too: "test.mp3" -> "new"
+            (you can change name and extension at the same time this way).
+    """
+    parent_path = file_path.parent
+
+    if not preserve_extension:
+        return parent_path / new_filename
+
+    file_path_without_extensions, trimmed_extensions = stem_extensions(file_path)
+    file_path_without_extensions = Path(file_path_without_extensions)
+
+    return parent_path / f"{file_path_without_extensions.name}.{trimmed_extensions}"
+
+
+def append_to_filename(file_path: Path, str_to_append: str):
+    """
+    Appends str_to_append to the file_path just before extension, for example:
+        "test/audio.mp3" with str_to_append = "_processed" will become
+        "test/audio_processed.mp3"
+    """
+    file_path_without_extensions, trimmed_extensions = stem_extensions(file_path)
+    file_path_without_extensions = Path(file_path_without_extensions)
+
+    return change_filename(
+        file_path=file_path,
+        new_filename=f"{file_path_without_extensions.name}{str_to_append}.{trimmed_extensions}",
+        preserve_extension=False,
+    )
+
+
+# %%
+def ffmpeg(
+    audio_path: Path,
+    options: list[str],
+    output_path: Path = None,
+    output_filename: str = None,
+    output_file_path: Path = None,
+):
     """
     returns (Path): file path of the resulting file
     """
     if not audio_path.exists():
         raise Exception(f"No file {audio_path} exists!")
 
-    audio_filename_without_extensions, trimmed_extensions = stem_extensions(audio_path)
-    output_file_path = f"{audio_filename_without_extensions}--cut.{trimmed_extensions}"
+    if output_file_path and output_path:
+        raise Exception(
+            f"If you've passed output_file_path, output_path will be ignored. Please, remove it from parameters"
+        )
 
-    subprocess.run([
-        "ffmpeg",
-        "-y", # Allow overwriting file if it exists.
-        "-ss",
-        start_time,
-        "-to", finish_time,
-        "-i", str(audio_path),
-        "-c", "copy",
-        output_file_path,
-    ])
+    if output_file_path and output_filename:
+        raise Exception(
+            f"If you've passed output_file_path, output_filename will be ignored. Please, remove it from parameters"
+        )
 
-    return Path(output_file_path)
+    output_path = output_path or interim_data_path
+
+    output_filename = output_filename or audio_path.name
+
+    output_file_path = output_file_path or (output_path / output_filename)
+
+    print(output_path)
+
+    subprocess.run(
+        [
+            "ffmpeg",
+            "-y",  # Allow overwriting file if it exists.
+            "-i",
+            str(audio_path),
+            *options,
+            output_file_path,
+        ]
+    )
+
+    return output_file_path
+
+
+# %%
+def cut_audio(
+    audio_path: Path,
+    start_time: str = "00:00:00",
+    finish_time: str = "00:00:15",
+    output_path: Path = None,
+    output_filename: str = None,
+    output_file_path: Path = None,
+) -> Path:
+    """
+    returns (Path): file path of the resulting file
+    """
+    output_filename = (
+        output_filename
+        or append_to_filename(file_path=audio_path, str_to_append="--cut").name
+    )
+
+    return ffmpeg(
+        audio_path=audio_path,
+        output_path=output_path,
+        output_filename=output_filename,
+        output_file_path=output_file_path,
+        options=[
+            "-ss",
+            start_time,
+            "-to",
+            finish_time,
+            "-c",
+            "copy",
+        ],
+    )
+
 
 # %% [markdown]
 # Возьмём первые 15 секунд, всё остальное обрежем.
 
 # %%
 try:
-    cut_audio_file_path = cut_audio(audio_path=audio_path, start_time=start_time, finish_time=finish_time)
+    cut_audio_file_path = cut_audio(
+        audio_path=audio_path, start_time=start_time, finish_time=finish_time
+    )
 except Exception as error:
     print(f"Caught this error while trying to cut_audio: {repr(error)}")
 
@@ -869,37 +1058,47 @@ except Exception as error:
 # Создадим функцию, которая с помощью ffmpeg конвертирует файл в формат,
 # совместимый с автоэнкодером.
 
+
 # %%
-def convert_audio_for_autoencoder(audio_path: Path) -> Path:
+def convert_audio_for_autoencoder(
+    audio_path: Path,
+    output_path: Path = None,
+    output_filename_without_extension: str = None,
+    output_file_path: Path = None,
+) -> Path:
     """
     returns (Path): file path of the resulting file
     """
-    if not audio_path.exists():
-        raise Exception(f"No file {audio_path} exists!")
 
-    audio_filename_without_extensions, _ = stem_extensions(audio_path)
-    output_file_path = f"{audio_filename_without_extensions}.wav"
+    audio_path_without_extensions = Path(stem_extensions(audio_path)[0])
+    output_filename = f"{output_filename_without_extension}.wav" or change_filename(
+        file_path=audio_path,
+        new_filename=f"{audio_path_without_extensions.name}.wav",
+        preserve_extension=False
+    )
 
-    subprocess.run([
-        "ffmpeg",
-        "-y", # Allow overwriting file if it exists.
-        "-i", str(audio_path),
-        "-ac", "1", # Audio channels.
-        "-ar", "16000", # Audio frame*r*ate.
-        output_file_path
-    ])
+    return ffmpeg(
+        audio_path=audio_path,
+        output_path=output_path or processed_data_path,
+        output_filename=output_filename,
+        output_file_path=output_file_path,
+        options=[
+            "-ac",
+            "1",  # Audio channels.
+            "-ar",
+            "16000",  # Audio frame*r*ate.
+        ],
+    )
 
-    return Path(output_file_path)
 
 # %% [markdown]
 # Конвертируем в wav файл с одним каналом и частотой дискретизации 16кГц
 
 # %%
 try:
-    audio_for_autoencoder_path = convert_audio_for_autoencoder(cut_audio_file_path)
+    audio_for_autoencoder_path = convert_audio_for_autoencoder(audio_path=cut_audio_file_path, output_filename_without_extension="audio")
 except Exception as error:
     print(f"Caught this error while trying to cut_audio: {repr(error)}")
-
 
 
 # %% [markdown]
