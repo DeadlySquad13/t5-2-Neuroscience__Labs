@@ -1132,30 +1132,188 @@ except Exception as error:
     print(f"Caught this error while trying to convert_audio_for_autoencoder for noise: {repr(error)}")
 
 # %% [markdown]
-"""
-### Разморозим целиком модель
-"""
+# Добавим шум в оригинал.
 
 # %%
-model = freeze(keep_last=66)  # More than total.
-summary(model, input_size=(32, 32, 3))
+from scipy.io import wavfile
 
-# %%
-dataloader = train_autoencoder(model)
-compare_classification_reports(dataloader)
+# Считывание аудио файла.
+fs, data = wavfile.read(audio_for_autoencoder_path)
+data = data / (2**16-1)
+data[0] = 1
+# Добавление шума.
+_, noise = wavfile.read(noise_for_autoencoder_path)
+noise = noise / (2**16-1) 
+noise = np.tile(noise, 1+data.size//noise.size)[:data.size].copy()
+noise = (0.1*data.max()/noise.max())*noise
+data_noised = data+noise
 
 # %% [markdown]
-"""
-Попробуем подобрать оптимальный параметр `keep_last`.
-"""
+
 
 # %%
-model = freeze(keep_last=10)  # More than total.
-summary(model, input_size=(32, 32, 3))
+start_sec = 0
+finish_sec = 15
+
+from IPython.display import Audio, display
+
+print('Original')
+display(Audio(data[fs*start_sec:fs*finish_sec], rate=fs))
+print('Noised')
+display(Audio(data_noised[fs*start_sec:fs*finish_sec], rate=fs))
 
 # %%
-dataloader = train_autoencoder(model)
-compare_classification_reports(dataloader)
+from scipy import signal
+
+_, _, Zxx = signal.stft(data_noised, fs=fs, nperseg=512)
+_, xrec = signal.istft(Zxx, fs)
+print('Reconstructed Noised')
+display(Audio(xrec[fs*start_sec:fs*finish_sec], rate=fs))
+_, _, Zxx0 = signal.stft(noise, fs=fs, nperseg=512)
+_, xrec = signal.istft(Zxx0, fs)
+print('Noise')
+display(Audio(xrec[fs*start_sec:fs*finish_sec], rate=fs))
+
+# %%
+# https://github.com/digantamisra98/Mish
+class Mish(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.softplus = nn.Softplus()
+        self.tanh = nn.Tanh()
+    
+    def forward(self, x):
+        return x*self.tanh(self.softplus(x))
+
+class DenoisingAE(nn.Module):
+    def __init__(self):
+        super().__init__()
+        
+        self.encoder = nn.Sequential(
+            nn.Conv1d(2, 256, kernel_size=3, stride=2, padding=1),
+            Mish(),
+            nn.Conv1d(256, 512, kernel_size=3, stride=2, padding=1),
+            Mish(),
+            nn.Conv1d(512, 1024, kernel_size=3, stride=2, padding=1),
+            Mish(),
+        )
+        self.decoder = nn.Sequential(
+            nn.ConvTranspose1d(1024, 512, kernel_size=3, stride=2, padding=1),
+            Mish(),
+            nn.ConvTranspose1d(512, 256, kernel_size=3, stride=2, padding=1),
+            Mish(),
+            nn.ConvTranspose1d(256, 2, kernel_size=3, stride=2, padding=1),
+        )
+            
+
+    def forward(self, x):
+        encoded = self.encoder(x)
+        return self.decoder(encoded)
+
+net = DenoisingAE()
+net.to(device)
+print(Zxx.shape[0])
+net(torch.rand(1, 2, Zxx.shape[0], device=device)).detach().cpu().numpy().shape
+
+# %%
+criterion = nn.MSELoss() #nn.SmoothL1Loss()
+optimizer = optim.Adam(net.parameters(), lr=1e-4) #, weight_decay=1e-6)
+
+# %% [markdown]
+# ### Создадим DataLoader'ы, разделив набор данных на обучающую и тестовую выборки.
+
+# %%
+batch_size = 128
+
+X = np.concatenate([np.real(Zxx).T[:,:,None],
+                    np.imag(Zxx).T[:,:,None]], axis=-1)
+y = np.concatenate([np.real(Zxx0).T[:,:,None],
+                    np.imag(Zxx0).T[:,:,None]], axis=-1)
+
+normalization = X.reshape(-1, 2).std()
+X /= normalization
+y /= normalization
+tensor_x = torch.Tensor(np.transpose(X, [0, 2, 1])) # channels first
+tensor_y = torch.Tensor(np.transpose(y, [0, 2, 1])) # channels first
+
+train_dataset = TensorDataset(tensor_x[:tensor_x.shape[0]*9//10],
+                              tensor_y[:tensor_x.shape[0]*9//10]) # create your datset
+train_dataloader = DataLoader(train_dataset,
+                              batch_size=batch_size, shuffle=True) # create your dataloader
+test_dataset = TensorDataset(tensor_x[tensor_x.shape[0]*9//10:],
+                              tensor_y[tensor_x.shape[0]*9//10:]) # create your datset
+test_dataloader = DataLoader(test_dataset,
+                             batch_size=batch_size, shuffle=True) # create your dataloader
+
+# %%
+def eval_dataset(dataloader):
+    net.eval()
+    target = []
+    pred = []
+    for i, data in enumerate(dataloader, 0):
+        inputs, labels = data
+        inputs, labels = inputs.to(device), labels.to(device)
+        preds = net(inputs).detach().cpu().numpy()
+        target.append(inputs.detach().cpu().numpy().reshape(inputs.shape[0], -1))
+        pred.append(preds.reshape(inputs.shape[0], -1))
+    net.train()
+    target = np.concatenate(target)
+    pred = np.concatenate(pred)
+    return r2_score(target, pred)
+
+eval_dataset(train_dataloader)
+
+# %%
+scores = []
+scores_val = []
+net.train()
+for epoch in tqdm(range(15)):  # loop over the dataset multiple times
+    running_loss = 0.0
+    for i, batch in tqdm(enumerate(train_dataloader, 0)):
+        # get the inputs; data is a list of [inputs, labels]
+        inputs, labels = batch
+        inputs, labels = inputs.to(device), labels.to(device)
+
+        # zero the parameter gradients
+        optimizer.zero_grad()
+
+        # forward + backward + optimize
+        outputs = net(inputs)
+        loss = criterion(outputs, labels)
+        loss.backward()
+        optimizer.step()
+
+        # print statistics
+        running_loss += loss.item()
+    print(f'[{epoch + 1}, {i + 1:5d}] loss: {running_loss / len(train_dataloader):.5f}')
+    scores.append(eval_dataset(train_dataloader))
+    scores_val.append(eval_dataset(test_dataloader))
+    print('R2 score on train:', scores[-1])
+    print('R2 score on val:', scores_val[-1])
+print('Finished Training')
+plt.plot(scores, label='training')
+plt.plot(scores_val, label='validation')
+plt.legend()
+
+# %%
+net.eval()
+pred = []
+batch_size = 128
+for i in tqdm(range(tensor_x.shape[0]//batch_size+1)):
+    preds = net(tensor_x[i*batch_size:(i+1)*batch_size].to(device))
+    pred.append(np.transpose(preds.detach().cpu().numpy(),
+                             [0, 2, 1])*normalization)
+pred = np.concatenate(pred, axis=0) 
+_, xrec = signal.istft((pred[:,:,0]+pred[:,:,1]*1j).T, fs)
+xrec = data_noised - xrec[:data.size]
+print(r2_score(data, data_noised))
+print(r2_score(data, xrec[:data.size]))
+print('Original')
+display(Audio(data[fs*start_sec:fs*finish_sec], rate=fs))
+print('Noised')
+display(Audio(data_noised[fs*start_sec:fs*finish_sec], rate=fs))
+print('Denoised')
+display(Audio(xrec[fs*start_sec:fs*finish_sec], rate=fs))
 
 
 # %% [markdown]
