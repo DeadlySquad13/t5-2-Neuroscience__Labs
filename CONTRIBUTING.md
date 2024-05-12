@@ -1,8 +1,16 @@
 # Contributing
+## Structure
+### Data folder
+It's separated into these sources:
+- `external` - Data from third party sources.
+- `interim` - Intermediate data that has been transformed.
+- `processed` - The final, canonical data sets for modeling.
+- `raw` - The original, immutable data dump.
+
 ## Coding guidelines
 Project structure inspired by popular [cookiecutter project templates](https://drivendata.github.io/cookiecutter-data-science/)
-
 ### Files, Data and Paths Naming
+
 - `[<dataname>_]filename` - filename.
 
     For example, `filename = "test.csv` or `cifar_filename = "Cifar100.tar.gz`.
