@@ -1,0 +1,5 @@
+# Lidar (lab6) specific dependencies.
+# 3.x version was giving wrong results.
+keras==2.15.0
+h5py==3.11.0
+pandas==2.2.2

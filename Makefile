@@ -14,5 +14,9 @@ install-dev-ju-nvim: requirements.txt requirements_dev.txt requirements_dev_ju.t
 	make install-dev-ju
 	pip install -r requirements_dev_ju_nvim.txt
 
+# Lidar specific (lab6).
+install-lidar: requirements_lidar.txt
+	pip install -r requirements_lidar.txt
+
 regenerate_requirements: src
 	pigar generate src
